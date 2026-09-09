@@ -43,6 +43,7 @@
  *   store [needle]             what the store offers — the ONLY way to learn the
  *                              installable slug, which is repo-hash-prefixed
  *   install <slug>             install
+ *   update <slug>              pull the version the store now offers
  *   options <slug> <json|->    set options; `-` reads the JSON from stdin
  *   port <slug> <ctr> <host>   republish a container port on a different host port
  *   sidebar <slug> [on|off]    show or hide the ingress panel
@@ -224,11 +225,22 @@ try {
     const store = await supervisor("/store");
     const matches = (store.addons ?? []).filter((a) => !needle || a.slug.includes(needle));
     for (const addon of matches) {
-      console.log(
-        `  ${addon.slug.padEnd(34)} ${String(addon.version).padEnd(10)} ${addon.installed ? "installed" : "available"}`,
-      );
+      // `version` is what is INSTALLED and `version_latest` is what the store
+      // offers; printing only the first makes a pending update invisible, which
+      // is the exact question this command gets asked.
+      const latest = addon.version_latest ?? addon.version;
+      const state = addon.installed
+        ? latest && latest !== addon.version
+          ? `installed ${addon.version}, update to ${latest}`
+          : `installed ${addon.version}`
+        : `available ${latest}`;
+      console.log(`  ${addon.slug.padEnd(34)} ${state}`);
     }
     if (!matches.length) console.log(`  nothing in the store matches ${needle}`);
+  } else if (command === "update") {
+    const slug = rest[0] ?? die("update needs a slug");
+    await supervisor(`/store/addons/${slug}/update`, "post");
+    console.log(`  updated: ${slug}`);
   } else if (command === "install") {
     const slug = rest[0] ?? die("install needs a slug");
     await supervisor(`/store/addons/${slug}/install`, "post");
