@@ -30,22 +30,22 @@ const OUTCOME_TONE: Record<string, string> = {
 };
 
 function Sparkline({ timeline }: { timeline: Timeline }) {
-  const peak = Math.max(1, ...timeline.days.map((d) => d.written + d.traced));
+  const peak = Math.max(1, ...timeline.days.map((d) => d.written + d.asked));
   return (
     <div className="mb-4">
       <div className="flex items-end gap-[2px]" style={{ height: "2.5rem" }}>
         {timeline.days.map((d) => {
-          const total = d.written + d.traced;
+          const total = d.written + d.asked;
           // Two stacked bars, not one: "written" and "asked" are different
           // events and a merged bar would hide which kind of day it was.
           return (
             <div
               key={d.day}
               className="flex flex-1 flex-col justify-end"
-              title={`${d.day} — ${d.written} ${t("trace.written")}, ${d.traced} ${t("trace.asked")}`}
+              title={`${d.day} — ${d.written} ${t("trace.written")}, ${d.asked} ${t("trace.asked")}`}
               style={{ minWidth: "3px" }}
             >
-              <div style={{ height: `${(d.traced / peak) * 100}%`, background: "var(--color-line-bright)" }} />
+              <div style={{ height: `${(d.asked / peak) * 100}%`, background: "var(--color-line-bright)" }} />
               <div style={{ height: `${(d.written / peak) * 100}%`, background: "var(--color-ember)" }} />
             </div>
           );
@@ -58,7 +58,7 @@ function Sparkline({ timeline }: { timeline: Timeline }) {
           {timeline.totals.written} {t("trace.written")}
         </span>
         <span>
-          {timeline.totals.traced} {t("trace.asked")}
+          {timeline.totals.asked} {t("trace.asked")}
         </span>
         <span>{timeline.to}</span>
       </p>

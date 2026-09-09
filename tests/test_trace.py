@@ -150,8 +150,8 @@ def test_the_timeline_reports_quiet_days_rather_than_omitting_them():
     """A gap is the interesting part of a timeline; a sparse array hides it."""
     result = trace.timeline(7)
     assert len(result["days"]) == 7
-    assert all(set(d) == {"day", "written", "traced", "kinds"} for d in result["days"])
-    assert result["totals"] == {"written": 0, "traced": 0, "busiest": result["days"][0]["day"]}
+    assert all(set(d) == {"day", "written", "traced", "asked", "kinds"} for d in result["days"])
+    assert result["totals"] == {"written": 0, "traced": 0, "asked": 0, "busiest": result["days"][0]["day"]}
 
 
 # ── what an outcome means ─────────────────────────────────────────────────────
@@ -232,3 +232,23 @@ def test_a_tag_list_is_filed_under_the_same_subject_the_web_uses():
     row = [r for r in list_traces() if r["tool"] == "recall_memories"][0]
     assert row["subject"] == "kvm, haos"
     assert "[" not in row["subject"]
+
+
+def test_the_timeline_does_not_count_a_write_as_a_question():
+    """
+    The UI draws this bar under the word "asked".
+
+    Every trace row is a fact about usage, but "what was asked of this corpus"
+    and "what was done to it" are different questions — a memory written and a
+    search log emptied were being counted as things people came looking for.
+    """
+    memory = create_memory({"title": "Written", "content": "x"})
+    call("remember", {"content": "another", "title": "Also written"})
+    call("retag_memory", {"id": memory["id"], "add": ["curated"]})
+    call("recall_memories", {"query": "written"})
+
+    result = trace.timeline(7)
+    today = [d for d in result["days"] if d["asked"] or d["traced"]]
+    assert today, "the rows written in this test should land on a day"
+    assert result["totals"]["asked"] == 1, "only the recall was a question"
+    assert result["totals"]["traced"] > result["totals"]["asked"]

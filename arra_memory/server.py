@@ -896,7 +896,13 @@ def create_app() -> FastAPI:
                 return json_response({"error": "invalid", "message": str(error)}, 400)
         if everything:
             return json_response({"deleted": await tp(clear_traces)})
-        pruned = await tp(prune_traces, int(days))
+        # `int()` on a query-string value the caller controls: "abc" raised
+        # ValueError out of the route and answered 500 with a traceback, for a
+        # request that is simply malformed.
+        span = _int(days)
+        if span is None or span < 0:
+            return json_response({"error": "invalid", "message": "olderThanDays must be a whole number of days."}, 400)
+        pruned = await tp(prune_traces, span)
         return json_response({"deleted": pruned["removed"], "cutoff": pruned["cutoff"]})
 
     # Superseded by /api/traces, which is durable and searchable. Kept because it
@@ -978,7 +984,15 @@ def create_app() -> FastAPI:
                 is_file = candidate.is_file()
             except (OSError, ValueError):
                 candidate, is_file = None, False
-            if is_file and candidate is not None and STATIC_DIR.resolve() in candidate.parents:
+            # Compared RESOLVED, not as the string the client sent. `/./index.html`
+            # and `/foo/../index.html` both name the shell while failing a
+            # `target != "index.html"` test, so they were served as a static file:
+            # un-stamped, and cached as immutable for a year. A browser that took
+            # that copy went on loading an unversioned ./main.js after every
+            # deploy — the exact failure the stamping exists to prevent, reachable
+            # from a link anyone could paste.
+            shell_path = (STATIC_DIR / "index.html").resolve()
+            if is_file and candidate is not None and candidate != shell_path and STATIC_DIR.resolve() in candidate.parents:
                 from fastapi.responses import FileResponse
 
                 return FileResponse(candidate, headers={"cache-control": "public, max-age=31536000, immutable"})

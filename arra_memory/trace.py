@@ -115,6 +115,32 @@ def normalize_keyword(value: str | None) -> str:
 # cloud showed deleted a different row while reporting success.
 WORD_SUBJECTS = frozenset({"keyword", "term", "tag"})
 
+# MCP tools that CHANGE something. Every trace row is a fact about usage, but
+# "what was asked of this corpus" and "what was done to it" are different
+# questions, and the timeline draws them as one bar labelled "asked" — so a
+# `remember` and a `forget_search_log` were being counted as things people came
+# to the corpus looking for.
+WRITE_TOOLS = frozenset(
+    {
+        "remember",
+        "revise_memory",
+        "forget_memory",
+        "retag_memory",
+        "forget_search_log",
+        "forget_trace_keyword",
+        "toggle_tool",
+        "send_to_oracle",
+    }
+)
+
+# Kinds that are not a question either: a tag edit and an admin deletion.
+WRITE_KINDS = frozenset({"tag", "admin"})
+
+
+def is_ask(kind: str, tool: str) -> bool:
+    """Whether a row records someone ASKING the corpus something."""
+    return kind not in WRITE_KINDS and tool not in WRITE_TOOLS
+
 
 def record_trace(
     *,
@@ -135,7 +161,11 @@ def record_trace(
     if not trace_enabled():
         return
     try:
-        keyword = normalize_keyword(subject) if subject_kind in WORD_SUBJECTS else (subject or "")
+        # Clipped whichever kind it is. normalize_keyword bounds the word kinds
+        # at KEYWORD_MAX, but an "item" subject went in raw — so a 50,000-char
+        # argument passed as an id entered the durable store whole, in a column
+        # every read of the log scans.
+        keyword = normalize_keyword(subject) if subject_kind in WORD_SUBJECTS else (subject or "")[:KEYWORD_MAX]
         # An empty key after normalising means no intent was expressed, so there
         # is nothing to file it under.
         if subject_kind in WORD_SUBJECTS and not keyword:
@@ -241,17 +271,27 @@ def subject_counts(limit: int = 50, days: int | None = None) -> list[tuple[str, 
     Only rows that carry a subject — a call with no intent (memory_stats,
     list_tags) is a real trace row and not a thing anyone asked ABOUT, so
     counting it would put an empty label in the cloud.
+
+    And only rows that are a QUESTION, filed under a WORD. Two things were
+    crowding out the actual subjects: memory ids, which are subjects of kind
+    "item" and read as noise in a cloud of words, and writes, which are not
+    something anyone asked the corpus for. A cloud dominated by uuids and by
+    `remember` does not answer "what do people keep coming here for", which is
+    the only question it exists to answer.
     """
     where = Q.and_(Q.ne("subject", ""), f"at >= {Q.lit(to_iso(datetime.now(timezone.utc) - timedelta(days=days)))}" if days else None)
     try:
-        rows = db().traces.rows(where or None, ["subject"])
+        rows = db().traces.rows(where or None, ["subject", "subject_kind", "kind", "tool"])
     except Exception:
         return []
     counts: dict[str, int] = {}
     for r in rows:
         subject = r["subject"]
-        if subject:
-            counts[subject] = counts.get(subject, 0) + 1
+        if not subject or (r.get("subject_kind") or "") == "item":
+            continue
+        if not is_ask(r.get("kind") or "", r.get("tool") or ""):
+            continue
+        counts[subject] = counts.get(subject, 0) + 1
     ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     # limit=0 means every subject. The asked cloud needs the whole population to
     # size against — computed over a top-N slice, "every subject was asked the
@@ -286,7 +326,11 @@ def subject_report(subject: str, subject_kind: str = "keyword") -> dict:
     Everything the log knows about one subject — the answer to "have I asked this
     before, and what happened when I did".
     """
-    key = normalize_keyword(subject) if subject_kind == "keyword" else subject
+    # The SAME rule list_traces uses, and that is the point: an id keeps its
+    # casing while a word is normalised. Deciding on subject_kind alone meant
+    # /api/traces?subject=deadbeef and /api/traces/deadbeef resolved the word
+    # differently, and one of them found nothing.
+    key = subject if _looks_like_id(subject) else normalize_keyword(subject)
     rows = db().traces.rows(Q.eq("subject", key)) if key else []
     if not rows:
         return {"subject": key, "count": 0, "first": None, "last": None, "byKind": {}, "bySurface": {}, "days": []}
@@ -309,7 +353,7 @@ def subject_report(subject: str, subject_kind: str = "keyword") -> dict:
     }
 
 
-def forget_keyword(keyword: str) -> int:
+def forget_keyword(keyword: str, surface: str = "web") -> int:
     """
     The one way to drop a subject. Raw keywords are retained indefinitely, so
     there must be exactly one way to remove one, and the removal is itself filed.
@@ -325,7 +369,10 @@ def forget_keyword(keyword: str) -> int:
     if not key:
         raise ValueError("a keyword is required")
     removed = db().traces.delete(Q.eq("subject", key))
-    record_trace(kind="admin", surface="web", tool="trace_forget", hits=removed, result={"deleted": removed})
+    # The SURFACE is the one thing an audit row for a deletion has to get right:
+    # hardcoding "web" meant a deletion made over MCP was recorded as one made
+    # from the browser, so the audit trail named the wrong actor.
+    record_trace(kind="admin", surface=surface, tool="trace_forget", hits=removed, result={"deleted": removed})
     return removed
 
 
@@ -356,7 +403,7 @@ def timeline(days: int = 30) -> dict:
     today = datetime.now(timezone.utc).date()
     start = today - timedelta(days=span - 1)
     buckets: dict[str, dict] = {
-        (start + timedelta(days=i)).isoformat(): {"day": (start + timedelta(days=i)).isoformat(), "written": 0, "traced": 0, "kinds": {}}
+        (start + timedelta(days=i)).isoformat(): {"day": (start + timedelta(days=i)).isoformat(), "written": 0, "traced": 0, "asked": 0, "kinds": {}}
         for i in range(span)
     }
     floor = start.isoformat()
@@ -371,10 +418,15 @@ def timeline(days: int = 30) -> dict:
         pass
 
     try:
-        for r in db().traces.rows(f"at >= {Q.lit(floor)}", ["day"]):
+        for r in db().traces.rows(f"at >= {Q.lit(floor)}", ["day", "kind", "tool"]):
             bucket = buckets.get(r["day"])
             if bucket:
                 bucket["traced"] += 1
+                # Split out, because the UI draws this bar under the word
+                # "asked": a memory written and a search log emptied are real
+                # trace rows and neither is a question anyone asked.
+                if is_ask(r.get("kind") or "", r.get("tool") or ""):
+                    bucket["asked"] += 1
     except Exception:
         pass
 
@@ -386,6 +438,7 @@ def timeline(days: int = 30) -> dict:
         "totals": {
             "written": sum(d["written"] for d in series),
             "traced": sum(d["traced"] for d in series),
+            "asked": sum(d["asked"] for d in series),
             "busiest": max(series, key=lambda d: d["written"] + d["traced"])["day"] if series else None,
         },
     }

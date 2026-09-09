@@ -98,3 +98,25 @@ def test_the_mcp_tool_serves_both_clouds_from_one_name():
     assert [i["tag"] for i in tags["items"]] == ["lancedb"]
     assert [i["subject"] for i in asked["items"]] == ["kubernetes"]
     assert "subjects asked" in call("tag_cloud", {"by": "asked"})["content"][0]["text"]
+
+
+def test_the_cloud_is_words_people_asked_for_and_not_ids_or_writes():
+    """
+    The asked cloud answers one question: what do people keep coming here for.
+
+    Memory ids and writes were crowding out the answer. An id is a subject of
+    kind "item" and reads as noise among words; `remember` and `forget_memory`
+    are things done TO the corpus, not things asked OF it. A cloud of uuids
+    answers nothing.
+    """
+    memory = create_memory({"content": "lancedb notes", "tags": ["lancedb"]})
+    call("read_memory", {"id": memory["id"]})
+    call("remember", {"content": "written, not asked", "title": "Write"})
+    call("recall_memories", {"query": "lancedb"})
+    call("recall_memories", {"query": "lancedb"})
+
+    cloud = asked_cloud()
+    subjects = [i["subject"] for i in cloud["items"]]
+    assert "lancedb" in subjects
+    assert memory["id"] not in subjects, "a memory id is not a word anyone asked for"
+    assert all("-" not in s or s == "lancedb" for s in subjects), f"unexpected id-shaped subject in {subjects}"

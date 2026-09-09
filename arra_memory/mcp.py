@@ -40,7 +40,7 @@ from .searchlog import (
 from .timerange import RELATIVE_RANGES, resolve_range
 from .cloud import asked_cloud, tag_cloud
 from .dig import chain, dig
-from .trace import forget_keyword, list_traces, record_trace, subject_report, timeline
+from .trace import forget_keyword, list_traces, record_trace, subject_report, timeline, trace_enabled
 from .tools import UNDISABLEABLE, disabled_tools, set_tool_disabled
 from .utils import SUGGESTED_KINDS, parse_iso, slugify, to_iso
 
@@ -306,7 +306,20 @@ BASE_TOOLS: list[dict] = [
                 },
                 "kind": KIND_ENUM,
                 **SCOPE_PROPS,
-                "tag": {"type": "string"},
+                # Declared as it is ACCEPTED. The handler has always taken a list
+                # and honoured `match`; the schema advertised a bare string and
+                # said nothing about `match`, so a client reading the schema had
+                # no way to know it could ask for "tagged both of these" — the
+                # one query that makes tags worth expanding.
+                "tag": {
+                    "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                    "description": "One tag, or several. Combined by `match`.",
+                },
+                "match": {
+                    "type": "string",
+                    "enum": ["any", "all"],
+                    "description": "How several tags combine. `any` (default) is OR; `all` is AND.",
+                },
                 "limit": _LIMIT_50,
             },
         },
@@ -505,7 +518,16 @@ BASE_TOOLS: list[dict] = [
                     "description": "`tags` = the memories' own tags. `asked` = the subjects in the trace log.",
                 },
                 "days": {"type": "integer", "minimum": 1, "maximum": 365, "description": "For `asked`: only this many days back."},
-                **WORKSPACE_FILTER_PROP,
+                # Both scoping arguments say which half they apply to. Offering
+                # `workspace` unconditionally while silently ignoring it under
+                # `by: asked` is worse than not offering it: the caller reads a
+                # cloud of the whole log believing it is scoped to one workspace.
+                # The trace log records what was asked, not where the answer
+                # lived, so there is no workspace to filter it by.
+                "workspace": {
+                    "type": "string",
+                    "description": "For `tags` only: one workspace. Ignored by `asked` — the trace log records what was asked, not which workspace answered.",
+                },
                 "limit": _LIMIT_100,
             },
         },
@@ -1002,7 +1024,15 @@ def call_tool(name: str, args: dict) -> dict:
             since=args.get("since"),
         )
         if not entries:
-            return {**_text("Nothing in the trace log matched."), "structuredContent": {"count": 0, "entries": []}}
+            # "Nothing matched" and "nothing is being recorded" are different
+            # answers, and reporting the first for the second sends the reader
+            # looking for a search bug instead of a setting.
+            if not trace_enabled():
+                return {
+                    **_text("The trace log is switched off, so nothing is being recorded. Turn on `trace_log` to start."),
+                    "structuredContent": {"count": 0, "entries": [], "enabled": False},
+                }
+            return {**_text("Nothing in the trace log matched."), "structuredContent": {"count": 0, "entries": [], "enabled": True}}
         body = "\n".join(
             f"{e['at']}  {e['surface']}/{e['kind']}  {e['tool']}"
             + (f"  “{e['subject']}”" if e["subject"] else "")
@@ -1027,7 +1057,7 @@ def call_tool(name: str, args: dict) -> dict:
 
     if name == "forget_trace_keyword":
         try:
-            removed = forget_keyword(str(args.get("keyword") or ""))
+            removed = forget_keyword(str(args.get("keyword") or ""), surface="mcp")
         except ValueError as error:
             return _tool_error(str(error))
         return {

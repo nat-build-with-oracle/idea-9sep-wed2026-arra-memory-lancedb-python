@@ -390,6 +390,9 @@ def search_memories(input: dict | None = None) -> list[dict]:
 # of relevance, not an error.
 FTS_COLUMNS = COLUMNS + ["_score"]
 
+# The same guard on the vector side. See search_semantic_nolog.
+VECTOR_COLUMNS = COLUMNS + ["_distance"]
+
 # How many FTS candidates to consider before deciding the index is not selective
 # enough to be trusted for this query. See _fts_hits.
 FTS_CANDIDATES = 2000
@@ -867,7 +870,12 @@ def search_semantic_nolog(input: dict) -> dict:
         .memories.raw.search(vectors[0])
         .distance_type("cosine")
         .where(where)
-        .select(COLUMNS)
+        # `_distance` is NAMED, for the same reason `_score` is on the FTS path:
+        # LanceDB warns that scoring auto-projection is going away, and without
+        # the column every hit would silently arrive at distance 0.0 — which here
+        # would put every far neighbour back inside dig's SEMANTIC_NEAR gate and
+        # rank hybrid results as if they were all equally close.
+        .select(VECTOR_COLUMNS)
         .limit(clamp_limit(input.get("limit")))
         .to_list()
     )

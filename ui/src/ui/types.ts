@@ -278,7 +278,10 @@ export interface TraceStats {
 export interface TimelineDay {
   day: string;
   written: number;
+  /** Every trace row for the day, writes and admin actions included. */
   traced: number;
+  /** Only the rows that record someone ASKING — what the bar is labelled. */
+  asked: number;
   kinds: Record<string, number>;
 }
 
@@ -286,5 +289,5 @@ export interface Timeline {
   from: string;
   to: string;
   days: TimelineDay[];
-  totals: { written: number; traced: number; busiest: string | null };
+  totals: { written: number; traced: number; asked: number; busiest: string | null };
 }

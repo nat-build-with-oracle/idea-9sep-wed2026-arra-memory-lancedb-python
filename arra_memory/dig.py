@@ -13,14 +13,16 @@ Two reads that answer questions no single search can:
         sequence is the thing "trace until found" actually means, and no single
         row in the log contains it.
 
-Ported from `trace-node/src/dig.ts`, which states the two rules that matter:
+Written here rather than ported: no sibling in this fleet ships a dig. The two
+rules it works to are the ones the tag cloud's siblings already argue for, and
+both are worth stating because breaking either is easy and silent:
 
   Scores are TIERS, not probabilities. An exact tag is not "more likely" than a
   body hit; it is a different kind of evidence, and mixing them into one
   probability would invent a precision neither has.
 
   Items under the confident floor are returned under `weak`, never hidden —
-  "a low score is a signal, not a failure". A subject that surfaces only weakly
+  a low score is a signal, not a failure. A subject that surfaces only weakly
   everywhere is exactly the subject worth looking at by hand.
 
 The dig is the one read that is also a write: it files itself in the trace log,
@@ -104,12 +106,17 @@ def dig(subject: str, limit: int = 20, source: str = "web") -> dict:
     # 2. In the words. A title hit outranks a body hit, the way the archive ranks.
     for memory in search_memories_nolog({"query": key, "limit": capped}):
         in_title = key in memory["title"].lower()
+        # The FTS text is title + content + TAGS, so a keyword hit can come from
+        # a tag alone. Reporting that as "in the body" sent a reader looking for
+        # a word that is not written anywhere in the memory — and every item here
+        # is supposed to say WHY it is in the answer.
+        in_body = key in (memory["content"] or "").lower()
         add(
             "keyword",
             memory["id"],
             memory["title"],
             SCORE["title"] if in_title else SCORE["body"],
-            "in the title" if in_title else "in the body",
+            "in the title" if in_title else ("in the body" if in_body else "in the tags"),
         )
 
     # 3. By meaning — the source that finds what shares no words at all. Absent
