@@ -54,6 +54,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Warm the builder image before the action reaches for it.
+      #
+      # home-assistant/builder runs `docker pull ghcr.io/home-assistant/<arch>-builder`
+      # itself, with no retry, and a `-e -o pipefail` shell — so a single
+      # `toomanyrequests` from ghcr fails the whole run. That is not a
+      # hypothetical: three consecutive builds died on it, on a pull that has
+      # nothing to do with this repository's own images. A pull that already
+      # succeeded is a cache hit inside the action.
+      #
+      # Never fails the job: if the warm-up cannot get the image, the action's
+      # own pull is still allowed to try and to report the real error.
+      - name: Warm the builder image
+        continue-on-error: true
+        run: |
+          # The version the action falls back to when used at @master. Kept in
+          # step with that default; if it drifts, this warms the wrong tag and
+          # the build is no worse off than it is without this step.
+          image="ghcr.io/home-assistant/amd64-builder:2026.02.1"
+          for attempt in 1 2 3 4 5; do
+            if docker pull "$image"; then
+              echo "warmed on attempt $attempt"
+              exit 0
+            fi
+            echo "attempt $attempt failed; backing off"
+            sleep $((attempt * 15))
+          done
+          echo "could not warm $image — letting the action try"
+
       - name: Build and push
         uses: home-assistant/builder@master
         with:
