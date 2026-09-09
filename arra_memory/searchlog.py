@@ -56,6 +56,15 @@ def record_search(
 ) -> None:
     if not search_log_enabled():
         return
+    # `tag` is a str in this signature but the callers hold whatever the request
+    # carried, and a multi-tag filter is a LIST. Passing it through built a row
+    # whose tag column was a Python list, the insert raised, and the except
+    # below swallowed it — so EVERY search carrying more than one tag was
+    # missing from the log entirely, while single-tag searches were recorded.
+    # A log with a shape-dependent hole in it is worse than no log: it answers
+    # "what did I search for" with a confident, partial lie.
+    if isinstance(tag, (list, tuple, set)):
+        tag = ", ".join(str(t) for t in tag)
     try:
         db().search_log.insert(
             SearchLogRow(
@@ -65,7 +74,7 @@ def record_search(
                 kind=kind or "",
                 workspace=workspace or "",
                 project=project or "",
-                tag=tag or "",
+                tag=str(tag or "")[:240],
                 result_count=len(result_ids),
                 result_ids=json.dumps(result_ids[:50]),
                 duration_ms=int(round(duration_ms)),

@@ -88,3 +88,40 @@ def test_every_size_stays_inside_the_declared_scale():
     for i in range(12):
         create_memory({"content": f"m{i}", "tags": ["t"] * 0 + [f"tag{i % 4}"]})
     assert all(MIN_PX <= i["size"] <= MAX_PX for i in tag_cloud()["items"])
+
+
+def test_the_scale_describes_the_corpus_and_not_the_slice():
+    """
+    A long tail's HEAD is usually flat, and the head is all a top-N slice sees.
+
+    With 45 tags used twice and one used ten times, a cloud that computed its
+    scale over the top 40 saw forty equal counts, declared the corpus uniform,
+    and drew every tag at the 11px floor — a cloud whose sizes encode nothing,
+    which is the one thing the module exists to prevent. The numbers that
+    describe the population have to be taken before the truncation, not after.
+    """
+    for i in range(45):
+        create_memory({"content": f"body {i}", "tags": [f"tail{i:02d}"]})
+        create_memory({"content": f"again {i}", "tags": [f"tail{i:02d}"]})
+    for i in range(10):
+        create_memory({"content": f"hot {i}", "tags": ["popular"]})
+
+    cloud = tag_cloud(limit=40)
+    assert cloud["uniform"] is False, "a corpus with a 10-vs-2 spread is not uniform"
+    assert cloud["max"] == 10, "the scale must come from the corpus, not the page"
+    assert cloud["distinct"] == 46, "distinct counts every tag, including the truncated ones"
+    assert cloud["shown"] == 40
+    assert len(cloud["items"]) == 40
+    # The top tag is drawn large and the tail is not: sizes carry information.
+    assert cloud["items"][0]["tag"] == "popular"
+    assert cloud["items"][0]["size"] > cloud["items"][-1]["size"]
+
+
+def test_a_genuinely_uniform_corpus_still_says_so():
+    """The uniform claim must stay reachable — it is a real fact about a corpus."""
+    for i in range(3):
+        create_memory({"content": f"one {i}", "tags": [f"even{i}"]})
+
+    cloud = tag_cloud()
+    assert cloud["uniform"] is True
+    assert {i["size"] for i in cloud["items"]} == {11.0}

@@ -104,6 +104,18 @@ def normalize_keyword(value: str | None) -> str:
     return text[:-1] if text.endswith("*") else text
 
 
+# Subject kinds that are WORDS people asked for, and so must be filed under one
+# spelling. "item" is the exception on purpose: a memory id is an identifier,
+# and normalising it would break the lookup it exists for.
+#
+# "term" was previously left raw, which meant a tag clicked in the UI was filed
+# as "LanceDB" while every reader — subject_report, the asked cloud, dig's asked
+# count, forget_keyword — looks it up as "lancedb". One tag became two entries in
+# the cloud, dig's asked count skipped the clicks, and forgetting the word the
+# cloud showed deleted a different row while reporting success.
+WORD_SUBJECTS = frozenset({"keyword", "term", "tag"})
+
+
 def record_trace(
     *,
     kind: str,
@@ -123,10 +135,10 @@ def record_trace(
     if not trace_enabled():
         return
     try:
-        keyword = normalize_keyword(subject) if subject_kind == "keyword" else (subject or "")
+        keyword = normalize_keyword(subject) if subject_kind in WORD_SUBJECTS else (subject or "")
         # An empty key after normalising means no intent was expressed, so there
         # is nothing to file it under.
-        if subject_kind == "keyword" and not keyword:
+        if subject_kind in WORD_SUBJECTS and not keyword:
             keyword = ""
         at = now_iso()
         db().traces.insert(
@@ -240,7 +252,12 @@ def subject_counts(limit: int = 50, days: int | None = None) -> list[tuple[str, 
         subject = r["subject"]
         if subject:
             counts[subject] = counts.get(subject, 0) + 1
-    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(1, min(200, limit))]
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    # limit=0 means every subject. The asked cloud needs the whole population to
+    # size against — computed over a top-N slice, "every subject was asked the
+    # same number of times" is usually true of the head of a long tail and always
+    # wrong about the log.
+    return ordered if limit == 0 else ordered[: max(1, min(200, limit))]
 
 
 def trace_stats() -> dict:

@@ -56,6 +56,10 @@ SCORE = {
 # Below this an item is weak — returned, and said to be weak.
 CONFIDENT_FLOOR = 15
 
+# list_traces' own hard cap on rows returned. The chain reads the log twice and
+# both reads stop here, so the chain has to say when it did.
+WINDOW = 500
+
 # Cosine DISTANCE, so smaller is closer: 0 is the same direction, 1 is
 # unrelated. A vector index always returns its k nearest neighbours, however far
 # away they are — so without a threshold every subject on an instance with
@@ -132,11 +136,16 @@ def dig(subject: str, limit: int = 20, source: str = "web") -> dict:
             pass
 
     # 4. Memories whose tags moved to or from this word — the curation trail.
-    for entry in list_traces(limit=200, kind="tag"):
-        if key in (entry["input"] or "").lower():
-            memory = get_memory(entry["subject"])
-            if memory:
-                add("retagged", memory["id"], memory["title"], SCORE["retagged"], f"tags changed {entry['at'][:10]}")
+    #
+    # The keyword goes to list_traces, which filters the whole table before it
+    # caps. Reading the newest 200 tag rows and filtering them HERE meant the
+    # window was shared with every other tag edit in the corpus: a few seconds of
+    # unrelated tagging pushed this subject's curation trail out of it, and the
+    # trail simply vanished from the dig with nothing to say it had.
+    for entry in list_traces(limit=capped, kind="tag", query=key):
+        memory = get_memory(entry["subject"])
+        if memory:
+            add("retagged", memory["id"], memory["title"], SCORE["retagged"], f"tags changed {entry['at'][:10]}")
 
     # 5. How often it has been asked for. One item, because the subject itself is
     #    the evidence — and it is the item that makes an EMPTY dig meaningful.
@@ -203,16 +212,18 @@ def chain(subject: str, limit: int = 50) -> dict:
     if not key:
         raise ValueError("a subject is required")
 
-    asks = [e for e in list_traces(limit=500, subject=key) if e["kind"] in ("mcp", "read", "dig")]
+    # WINDOW is list_traces' own hard cap. Named, because both reads below are
+    # bounded by it and the summary has to be honest about that rather than
+    # claiming to have counted a history it only saw the newest slice of.
+    asks = [e for e in list_traces(limit=WINDOW, subject=key) if e["kind"] in ("mcp", "read", "dig")]
     asks.sort(key=lambda e: (e["at"], e["seq"]))
     if not asks:
-        return {"subject": key, "links": [], "resolved": False, "summary": "Never asked for."}
+        return {"subject": key, "links": [], "resolved": False, "summary": "Never asked for.", "truncated": False}
 
-    # Every tag change, so an ask can be paired with the curation that followed it.
-    retags = sorted(
-        (e for e in list_traces(limit=500, kind="tag") if key in (e["input"] or "").lower()),
-        key=lambda e: e["at"],
-    )
+    # Every tag change that mentions this subject, filtered by the DATABASE
+    # rather than out of a shared newest-N window: the same defect as in dig,
+    # where any other tagging activity silently emptied `led_to`.
+    retags = sorted(list_traces(limit=WINDOW, kind="tag", query=key), key=lambda e: e["at"])
 
     links: list[dict] = []
     for i, ask in enumerate(asks):
@@ -235,15 +246,22 @@ def chain(subject: str, limit: int = 50) -> dict:
         )
 
     first_hit = next((l for l in links if l["hits"] > 0), None)
-    empties = sum(1 for l in links if l["hits"] == 0)
+    # Only the empties BEFORE the first hit. Counting every empty ask made the
+    # sentence "found nothing N× before the first hit" false whenever the subject
+    # was asked again later and missed — the number said one thing and the
+    # timeline beside it said another.
+    empties = sum(1 for l in links[: links.index(first_hit)] if l["hits"] == 0) if first_hit else sum(1 for l in links if l["hits"] == 0)
+    truncated = len(asks) >= WINDOW
+    # A count that silently stopped at the window is a lie with a number in it.
+    counted = f"at least {len(links)}" if truncated else f"{len(links)}"
     if first_hit and empties:
         elapsed = _gap(links[0]["at"], first_hit["at"])
-        summary = f"Asked {len(links)}×. Found nothing {empties}× before the first hit{elapsed}."
+        summary = f"Asked {counted}×. Found nothing {empties}× before the first hit{elapsed}."
     elif first_hit:
-        summary = f"Asked {len(links)}×, answered every time."
+        summary = f"Asked {counted}×, answered every time."
     else:
         # The chain that has not closed. This is the one worth acting on.
-        summary = f"Asked {len(links)}× and never answered — nothing in the corpus carries it yet."
+        summary = f"Asked {counted}× and never answered — nothing in the corpus carries it yet."
 
     return {
         "subject": key,
@@ -251,6 +269,9 @@ def chain(subject: str, limit: int = 50) -> dict:
         "resolved": bool(first_hit),
         "emptyAsks": empties,
         "summary": summary,
+        # Said out loud rather than left for the reader to infer from a round
+        # number: the log was longer than this chain could see.
+        "truncated": truncated,
     }
 
 

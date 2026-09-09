@@ -73,6 +73,10 @@ UNTRACED_TOOLS = frozenset(
         "list_search_log",
         "list_tools",
         "timeline",
+        # Also a read OF the log: memory_history is list_traces filtered to one
+        # memory, so tracing it made the history grow every time it was opened,
+        # and the newest entry was always the act of looking.
+        "memory_history",
         # Not because it is unimportant — because it files its OWN row, carrying
         # the before and after sets. Letting the generic tracer log it too put
         # every tag edit in a memory's history twice, the second time with no
@@ -85,26 +89,73 @@ UNTRACED_TOOLS = frozenset(
 )
 
 
+# Tools whose answer is a COLLECTION. For these, and only these, zero results
+# means "empty" — the corpus was asked something and had nothing.
+#
+# For every other tool a hit count is meaningless: read_memory, remember,
+# forget_memory and revise_memory return one object or a boolean, so counting
+# collection keys gave 0 and filed a perfectly successful call — a memory read,
+# a memory DELETED — as outcome="empty". trace_chain then reported a subject
+# that plainly exists as "asked, never answered".
+COLLECTION_TOOLS = frozenset(
+    {
+        "recall_memories",
+        "list_tags",
+        "list_agents",
+        "list_projects",
+        "list_workspaces",
+        "list_fleet",
+        "list_tools",
+        "list_search_log",
+        "digest",
+        "tag_cloud",
+    }
+)
+
+
+def _subject_of(args: dict) -> tuple[str, str]:
+    """
+    What this call was ABOUT, and what kind of thing that is.
+
+    A list argument is joined rather than stringified: `str(["a", "b"])` wrote
+    the Python repr `['a', 'b']` into the durable log, which then appeared as a
+    chip in the asked cloud and could never be matched by the same filter asked
+    through the web, where it arrives already joined.
+    """
+    for key, kind in (("query", "keyword"), ("tag", "term"), ("id", "item")):
+        value = args.get(key)
+        if not value:
+            continue
+        if isinstance(value, (list, tuple, set)):
+            value = ", ".join(str(v) for v in value)
+        return str(value), kind
+    return "", ""
+
+
 def _trace_call(name: str, args: dict, started: float, result: dict | None = None, error: Exception | None = None) -> None:
     if name in UNTRACED_TOOLS:
         return
     structured = (result or {}).get("structuredContent") or {}
-    subject, subject_kind = "", ""
-    for key, kind in (("query", "keyword"), ("tag", "term"), ("id", "item"), ("name", "term")):
-        if args.get(key):
-            subject, subject_kind = str(args[key]), kind
-            break
+    subject, subject_kind = _subject_of(args)
     hits = structured.get("count")
     if hits is None:
         hits = len(structured.get("memories") or structured.get("entries") or structured.get("tags") or [])
     failed = bool(error) or bool((result or {}).get("isError"))
+    if failed:
+        outcome = "error"
+    elif name in COLLECTION_TOOLS:
+        outcome = "empty" if not hits else "ok"
+    else:
+        # It ran and it did not fail. Whether it happened to return a countable
+        # collection says nothing about that.
+        outcome = "ok"
     record_trace(
         kind="mcp",
         surface="mcp",
         tool=name,
         subject=subject,
         subject_kind=subject_kind,
-        outcome="error" if failed else ("empty" if not hits and subject else "ok"),
+        outcome=outcome,
         hits=int(hits or 0),
         duration_ms=(time.monotonic() - started) * 1000,
         mode=str(structured.get("matchMode") or ""),
@@ -1173,13 +1224,19 @@ def handle_mcp(request: dict):
         args = params.get("arguments") or {}
         if not isinstance(args, dict):
             args = {}
-        if name in disabled_tools():
-            return _ok(id_, _tool_error(f"{name} is switched off for this connector."))
-
         # Traced HERE, around the dispatcher, so no tool can be added without
         # being logged — and on BOTH paths, because the call that failed is the
         # one you most want to find later.
         started = time.monotonic()
+        if name in disabled_tools():
+            # Inside the traced region on purpose. A client repeatedly calling a
+            # tool that is switched off is exactly what someone reads the log to
+            # discover, and returning before the tracer made those calls
+            # invisible — the log said the connector had gone quiet.
+            refusal = _tool_error(f"{name} is switched off for this connector.")
+            _trace_call(name, args, started, result=refusal)
+            return _ok(id_, refusal)
+
         try:
             result = call_tool(name, args)
         except Exception as error:

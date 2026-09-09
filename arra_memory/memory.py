@@ -608,13 +608,27 @@ def list_projects(limit: int = 20, workspace: str | None = None) -> list[dict]:
     ]
 
 
-def list_tags(limit: int = 50, workspace: str | None = None) -> list[dict]:
+def tag_counts(workspace: str | None = None) -> list[dict]:
+    """
+    EVERY tag with its count, ordered, untruncated.
+
+    The scan and the counting cost the same whether the caller wants ten tags or
+    all of them — the limit only threw the rest away. Split out because the tag
+    cloud needs corpus-wide facts (the largest count, whether every tag really is
+    used equally) that cannot be recovered from a truncated slice: computed over
+    the top 40 of a long tail, "all counts equal" is usually true and always
+    wrong, and it collapsed the whole cloud to the 11px floor while reporting
+    uniform:true about a corpus that is nothing of the kind.
+    """
     rows = db().memories.rows(_workspace_where(workspace), ["tags"])
     counts: Counter = Counter()
     for r in rows:
         counts.update(parse_tags(r["tags"]))
-    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    return [{"tag": t, "count": n} for t, n in ordered[: clamp_limit(limit, 50)]]
+    return [{"tag": t, "count": n} for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def list_tags(limit: int = 50, workspace: str | None = None) -> list[dict]:
+    return tag_counts(workspace)[: clamp_limit(limit, 50)]
 
 
 def list_agents(limit: int = 50, workspace: str | None = None) -> list[dict]:

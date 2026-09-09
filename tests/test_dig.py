@@ -198,3 +198,38 @@ def test_reading_the_chain_does_not_add_to_it():
     chain("kubernetes")
     chain("kubernetes")
     assert len(chain("kubernetes")["links"]) == before
+
+
+def test_the_curation_trail_survives_unrelated_tagging():
+    """
+    dig read the newest 200 tag rows and filtered them in Python, so the window
+    was shared with every other tag edit in the corpus. A few seconds of
+    unrelated tagging pushed this subject's trail out of it, and the trail
+    vanished with nothing to say that it had. The keyword now goes to the
+    database, which filters before it caps.
+    """
+    memory = create_memory({"title": "The runbook", "content": "how we run it", "tags": ["kvm"]})
+    retag_memory(memory["id"], add=["kubernetes"])
+
+    noise = create_memory({"title": "Noise", "content": "unrelated"})
+    for i in range(60):
+        retag_memory(noise["id"], add=[f"noise{i}"], remove=[f"noise{i - 1}"] if i else None)
+
+    found = dig("kubernetes")
+    assert any(i["source"] == "retagged" for i in found["items"] + found["weak"])
+
+
+def test_a_chain_counts_only_the_empties_before_the_first_hit():
+    """
+    "Found nothing N× before the first hit" counted every empty ask, including
+    the ones after it — so the number and the timeline beside it disagreed.
+    """
+    asked("kubernetes")
+    asked("kubernetes")
+    asked("kubernetes", hits=2)
+    asked("kubernetes")
+
+    story = chain("kubernetes")
+    assert story["emptyAsks"] == 2, "the ask after the hit is not part of the search that preceded it"
+    assert "nothing 2×" in story["summary"]
+    assert story["truncated"] is False

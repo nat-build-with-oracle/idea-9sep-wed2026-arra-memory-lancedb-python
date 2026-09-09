@@ -152,3 +152,83 @@ def test_the_timeline_reports_quiet_days_rather_than_omitting_them():
     assert len(result["days"]) == 7
     assert all(set(d) == {"day", "written", "traced", "kinds"} for d in result["days"])
     assert result["totals"] == {"written": 0, "traced": 0, "busiest": result["days"][0]["day"]}
+
+
+# ── what an outcome means ─────────────────────────────────────────────────────
+
+
+def test_a_successful_call_that_returns_one_object_is_not_empty():
+    """
+    "empty" means the corpus was asked something and had nothing.
+
+    It does not mean "returned no countable collection". Tools that answer with a
+    single object — read_memory, remember, forget_memory — were filed as empty on
+    their SUCCESS path, so trace_chain reported a subject that plainly exists as
+    "asked, never answered", and a deletion looked like a failed lookup.
+    """
+    from arra_memory.trace import list_traces
+
+    memory = create_memory({"title": "Runbook", "content": "how we run it"})
+    call("read_memory", {"id": memory["id"]})
+    row = [r for r in list_traces() if r["tool"] == "read_memory"][0]
+    assert row["outcome"] == "ok"
+
+    call("forget_memory", {"id": memory["id"]})
+    row = [r for r in list_traces() if r["tool"] == "forget_memory"][0]
+    assert row["outcome"] == "ok"
+
+
+def test_a_search_with_nothing_to_show_is_still_empty():
+    """The distinction has to survive the fix, or the log stops being useful."""
+    from arra_memory.trace import list_traces
+
+    call("recall_memories", {"query": "nothing-here-at-all"})
+    row = [r for r in list_traces() if r["tool"] == "recall_memories"][0]
+    assert row["outcome"] == "empty"
+
+
+def test_reading_a_memory_s_history_does_not_add_to_it():
+    """An observation must not observe itself."""
+    from arra_memory.trace import list_traces
+
+    memory = create_memory({"title": "Watched", "content": "x"})
+    call("memory_history", {"id": memory["id"]})
+    call("memory_history", {"id": memory["id"]})
+    assert [r for r in list_traces() if r["tool"] == "memory_history"] == []
+
+
+def test_a_call_to_a_switched_off_tool_is_recorded():
+    """
+    A client hammering a disabled tool is exactly what the log is read to find.
+
+    Refusing before the tracer ran made those calls invisible, so the log read as
+    "the connector went quiet" rather than "the connector kept asking for
+    something it is not allowed to have".
+    """
+    from arra_memory.tools import set_tool_disabled
+    from arra_memory.trace import list_traces
+
+    set_tool_disabled("digest", True)
+    try:
+        answer = call("digest", {})
+        assert answer.get("isError")
+        row = [r for r in list_traces() if r["tool"] == "digest"][0]
+        assert row["outcome"] == "error"
+        assert "switched off" in row["error"]
+    finally:
+        set_tool_disabled("digest", False)
+
+
+def test_a_tag_list_is_filed_under_the_same_subject_the_web_uses():
+    """
+    `str(["a", "b"])` wrote the Python repr `['a', 'b']` into the durable log.
+
+    It then appeared as a chip in the asked cloud, and no filter asked through
+    the web — where tags arrive joined — could ever match it.
+    """
+    from arra_memory.trace import list_traces
+
+    call("recall_memories", {"tag": ["kvm", "haos"]})
+    row = [r for r in list_traces() if r["tool"] == "recall_memories"][0]
+    assert row["subject"] == "kvm, haos"
+    assert "[" not in row["subject"]

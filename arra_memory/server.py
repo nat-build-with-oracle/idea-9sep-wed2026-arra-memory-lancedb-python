@@ -611,6 +611,11 @@ def create_app() -> FastAPI:
                     "project": body.get("project"),
                     "createdBy": body.get("createdBy"),
                     "tag": body.get("tag"),
+                    # Passed, like every other filter. Dropping it silently made
+                    # `match: "all"` behave as "any" — the UI asks for
+                    # memories carrying BOTH tags and was handed the ones
+                    # carrying either, with no way to tell from the response.
+                    "match": body.get("match"),
                     "limit": body.get("limit"),
                     "source": "web",
                 },
@@ -621,7 +626,9 @@ def create_app() -> FastAPI:
             _trace_read(query, body.get("tag"), 0, started, auth.method, error=str(error))
             return json_response({"error": "semantic_unavailable", "message": str(error) or "embedding failed"}, 503)
         _trace_read(query, body.get("tag"), len(result["memories"]), started, auth.method, mode=result["effectiveMode"])
-        return json_response(result)
+        # Echoed ALWAYS, like the GET sibling: a client that cannot see which
+        # rule was applied cannot tell a narrow result from a broken filter.
+        return json_response({**result, "match": normalize_match(body.get("match"))})
 
     # ── settings: OWNER SESSION ONLY ───────────────────────────────────────
 
@@ -991,7 +998,15 @@ def _trace_read(query, tag, hits: int, started: float, method: str | None, mode:
     a log wired up at call sites is one forgotten call away from answering "what
     did I ask for" with a confident, partial lie.
     """
-    subject = (query or "").strip() or (tag or "")
+    # `tag` arrives as a list from the JSON body and as a joined string from the
+    # query string. Passing the list straight through produced a TraceRow whose
+    # subject was a Python list, the insert raised, and record_trace's own
+    # except swallowed it — so a tag-only search through POST left NO row while
+    # its GET sibling left one. A log that is silent for one of two equivalent
+    # calls is worse than one that is silent for both.
+    if isinstance(tag, (list, tuple, set)):
+        tag = ", ".join(str(t) for t in tag)
+    subject = (query or "").strip() or (str(tag or ""))
     if not subject:
         return
     record_trace(

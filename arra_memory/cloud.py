@@ -38,7 +38,8 @@ from __future__ import annotations
 
 import math
 
-from .memory import list_tags
+from .memory import tag_counts
+from .utils import clamp_limit
 
 MIN_PX = 11.0
 MAX_PX = 20.0
@@ -52,10 +53,18 @@ def size_for(count: int, largest: int) -> float:
     return round(MIN_PX + (MAX_PX - MIN_PX) * weight, 1)
 
 
-def _cloud(pairs: list[tuple[str, int]], key: str, extra: dict) -> dict:
-    """Shape a list of (label, count) into a cloud. One law, two callers."""
+def _cloud(pairs: list[tuple[str, int]], key: str, extra: dict, limit: int = 50) -> dict:
+    """
+    Shape a list of (label, count) into a cloud. One law, two callers.
+
+    `pairs` must be EVERY pair, not a top-N slice: the scale and the uniformity
+    claim are facts about the whole population, and truncating first makes both
+    of them wrong in the same direction. The truncation happens here, after the
+    numbers that describe the population have been taken from it.
+    """
     largest = max((n for _, n in pairs), default=0)
     flat = largest > 0 and all(n == largest for _, n in pairs)
+    shown = pairs[: clamp_limit(limit, 50)]
     items = [
         {
             key: label,
@@ -63,14 +72,15 @@ def _cloud(pairs: list[tuple[str, int]], key: str, extra: dict) -> dict:
             "weight": 0.0 if flat else (round(math.log1p(n) / math.log1p(largest), 4) if largest else 0.0),
             "size": MIN_PX if flat else size_for(n, largest),
         }
-        for label, n in pairs
+        for label, n in shown
     ]
     return {
         "items": items,
         "max": largest,
         "total": sum(n for _, n in pairs),
-        "distinct": len(items),
+        "distinct": len(pairs),
         "uniform": flat,
+        "shown": len(items),
         "scale": {"min": MIN_PX, "max": MAX_PX, "law": "log1p"},
         **extra,
     }
@@ -93,8 +103,10 @@ def asked_cloud(limit: int = 50, days: int | None = None) -> dict:
     """
     from .trace import subject_counts
 
-    pairs = subject_counts(limit=limit, days=days)
-    return _cloud(pairs, "subject", {"days": days or 0})
+    # limit=0 asks for every subject: the scale and the uniformity claim are
+    # facts about the whole log, and _cloud does the truncating afterwards.
+    pairs = subject_counts(limit=0, days=days)
+    return _cloud(pairs, "subject", {"days": days or 0}, limit=limit)
 
 
 def tag_cloud(limit: int = 50, workspace: str | None = None) -> dict:
@@ -104,10 +116,22 @@ def tag_cloud(limit: int = 50, workspace: str | None = None) -> dict:
     Ordered by count, because the caller decides whether to render it as a cloud
     (where order barely matters) or as a list (where it does), and a
     count-ordered list is the one both can use.
+
+    The scale is derived from the WHOLE corpus and the items are then truncated
+    to `limit` — not the other way round. Computed over the top-N slice, a long
+    tail's head is usually flat: every one of the top 40 tags has the same count,
+    so `flat` came out true, every size collapsed to the 11px floor, and the
+    response claimed uniform:true about a corpus that was anything but. A cloud
+    whose sizes do not encode usage is just a list with inconsistent typography,
+    which is the one thing this module exists to prevent.
+
+    `max`, `total` and `distinct` describe the corpus too, and say so — they are
+    the numbers a reader uses to know what the truncation hid.
     """
-    tags = list_tags(limit, workspace)
-    largest = max((t["count"] for t in tags), default=0)
-    flat = largest > 0 and all(t["count"] == largest for t in tags)
+    everything = tag_counts(workspace)
+    shown = everything[: clamp_limit(limit, 50)]
+    largest = max((t["count"] for t in everything), default=0)
+    flat = largest > 0 and all(t["count"] == largest for t in everything)
     items = [
         {
             "tag": t["tag"],
@@ -117,17 +141,19 @@ def tag_cloud(limit: int = 50, workspace: str | None = None) -> dict:
             "weight": 0.0 if flat else round(math.log1p(t["count"]) / math.log1p(largest), 4) if largest else 0.0,
             "size": MIN_PX if flat else size_for(t["count"], largest),
         }
-        for t in tags
+        for t in shown
     ]
     return {
         "items": items,
         "max": largest,
-        "total": sum(t["count"] for t in tags),
-        "distinct": len(items),
+        "total": sum(t["count"] for t in everything),
+        "distinct": len(everything),
         # Stated rather than implied: a renderer that draws every tag the same
         # size should be able to say why, and "every tag is used equally" is a
         # fact about the corpus worth surfacing.
         "uniform": flat,
+        # So a reader can tell a small corpus from a truncated view of a big one.
+        "shown": len(items),
         "scale": {"min": MIN_PX, "max": MAX_PX, "law": "log1p"},
         "workspace": workspace or "",
     }

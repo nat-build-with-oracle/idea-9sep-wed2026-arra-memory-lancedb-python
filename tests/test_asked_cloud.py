@@ -81,6 +81,9 @@ def test_an_empty_log_is_an_empty_cloud():
         "total": 0,
         "distinct": 0,
         "uniform": False,
+        # `shown` counts what survived the limit, so a reader can tell a small
+        # log from a truncated view of a big one.
+        "shown": 0,
         "scale": {"min": 11.0, "max": 20.0, "law": "log1p"},
         "days": 0,
     }
