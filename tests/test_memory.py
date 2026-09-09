@@ -77,6 +77,31 @@ def test_thai_is_searchable_by_a_word_inside_a_sentence():
     assert memory["id"] in [m["id"] for m in found]
 
 
+def test_the_full_text_path_still_gets_a_relevance_score():
+    """
+    LanceDB warns that scoring auto-projection is going away. If `_score` stopped
+    arriving, every hit would rank equal — relevance would flatten silently rather
+    than fail, so the column is asked for by name and checked here.
+    """
+    from arra_memory.memory import FTS_COLUMNS, _fts_hits
+
+    create_memory({"title": "needle", "content": "a body worth ranking"})
+    assert "_score" in FTS_COLUMNS
+    hits = _fts_hits("needle", "", 10)
+    assert hits and all(isinstance(h.get("_score"), float) for h in hits)
+
+
+def test_keyword_search_does_not_find_things_by_coincidence():
+    """
+    A phrase, not a bag of words. This is the signal a caller uses to decide
+    whether a search by meaning is still worth trying, so a permissive fallback
+    that "finds something" would erase the difference between "keyword found
+    nothing" and "nothing is here".
+    """
+    create_memory({"title": "system notes", "content": "a memory of something else entirely"})
+    assert search_memories({"query": "nothing matches this at all"}) == []
+
+
 def test_search_matches_title_content_and_tags():
     a = create_memory({"title": "needle in the title", "content": "body"})
     b = create_memory({"title": "other", "content": "the needle is in the body"})

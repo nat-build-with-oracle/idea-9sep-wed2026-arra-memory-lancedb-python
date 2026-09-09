@@ -251,16 +251,36 @@ def search_memories(input: dict | None = None) -> list[dict]:
     )
 
 
+# `_score` is named in the select list rather than left to LanceDB's scoring
+# auto-projection, which it warns is going away. Without it the column would one
+# day simply stop arriving and every hit would rank equal — a silent flattening
+# of relevance, not an error.
+FTS_COLUMNS = COLUMNS + ["_score"]
+
+
 def _fts_hits(query: str, where: str, fetch: int) -> list[dict]:
+    """
+    A PHRASE, not a bag of words — and an empty phrase result is a real answer.
+
+    The original ran one FTS5 MATCH with the whole query quoted as a literal
+    phrase, so "memory system" did not match a memory that merely contains both
+    words paragraphs apart. Falling back to a permissive AND when the phrase finds
+    nothing was tried and reverted: it made keyword recall find things by
+    coincidence, which erases the distinction between "keyword found nothing" and
+    "nothing is here" — the one signal a caller uses to decide whether a search by
+    meaning is still worth trying.
+
+    MatchQuery is therefore reached only when PhraseQuery RAISES (an index that
+    cannot serve a phrase at all), never merely because it returned nothing.
+    """
     table = db().memories.raw
-    attempts = (PhraseQuery(query, "text"), MatchQuery(query, "text", operator="AND"))
     last_error: Exception | None = None
-    for q in attempts:
+    for q in (PhraseQuery(query, "text"), MatchQuery(query, "text", operator="AND")):
         try:
             search = table.search(q, query_type="fts")
             if where:
                 search = search.where(where)
-            return search.select(COLUMNS).limit(fetch).to_list()
+            return search.select(FTS_COLUMNS).limit(fetch).to_list()
         except Exception as error:  # a broken index degrades to the scan below
             last_error = error
     if last_error:
