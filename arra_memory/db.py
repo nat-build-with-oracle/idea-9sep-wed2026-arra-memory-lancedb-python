@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 import lancedb
@@ -38,6 +39,8 @@ log = logging.getLogger("arra-memory")
 FTS_COLUMN = "text"
 FTS_INDEX = "text_idx"
 OPTIMIZE_DELAY_SECONDS = 5.0
+# However busy it stays, compaction happens within this of the first pending write.
+OPTIMIZE_MAX_WAIT_SECONDS = 60.0
 
 
 def lancedb_dir() -> Path:
@@ -67,6 +70,7 @@ class Database:
         self.vector_dimensions: int | None = None
         self.schema_error: str | None = None
         self._optimize_timer: threading.Timer | None = None
+        self._optimize_deadline: float | None = None
         self._optimize_lock = threading.Lock()
 
     # -- schema ------------------------------------------------------------------
@@ -132,11 +136,28 @@ class Database:
     # -- housekeeping ------------------------------------------------------------
 
     def schedule_optimize(self) -> None:
-        """Fold recent writes into the indices, soon, off the request path."""
+        """
+        Fold recent writes into the indices, soon, off the request path.
+
+        Debounced, but with a ceiling — a pure debounce starves under exactly the
+        workload it exists for. Every write rescheduled the timer, so a cadence
+        faster than one write per delay meant compaction never ran at all: 1000
+        memories imported one at a time left 1000 data files and 1003 manifests,
+        and the scan behind /api/facets went from 3ms to 249ms, permanently, for
+        as long as the import continued. LanceDB writes a file per commit, so this
+        is a cliff the original's single append-only SQLite file did not have.
+
+        `_optimize_deadline` is the promise: once a write is pending, compaction
+        happens within OPTIMIZE_MAX_WAIT_SECONDS however busy it stays.
+        """
         with self._optimize_lock:
+            now = time.monotonic()
+            if self._optimize_deadline is None:
+                self._optimize_deadline = now + OPTIMIZE_MAX_WAIT_SECONDS
+            delay = min(OPTIMIZE_DELAY_SECONDS, max(0.0, self._optimize_deadline - now))
             if self._optimize_timer is not None:
                 self._optimize_timer.cancel()
-            timer = threading.Timer(OPTIMIZE_DELAY_SECONDS, self.optimize_now)
+            timer = threading.Timer(delay, self.optimize_now)
             timer.daemon = True
             self._optimize_timer = timer
             timer.start()
@@ -144,6 +165,7 @@ class Database:
     def optimize_now(self) -> None:
         with self._optimize_lock:
             self._optimize_timer = None
+            self._optimize_deadline = None
         for table in (self.memories, self.search_log, self.kv, self.oauth_tokens, self.oauth_codes):
             table.optimize()
 
@@ -152,6 +174,7 @@ class Database:
             if self._optimize_timer is not None:
                 self._optimize_timer.cancel()
                 self._optimize_timer = None
+            self._optimize_deadline = None
 
 
 _db: Database | None = None

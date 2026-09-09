@@ -87,7 +87,7 @@ def test_the_full_text_path_still_gets_a_relevance_score():
 
     create_memory({"title": "needle", "content": "a body worth ranking"})
     assert "_score" in FTS_COLUMNS
-    hits = _fts_hits("needle", "", 10)
+    hits = _fts_hits("needle", "")
     assert hits and all(isinstance(h.get("_score"), float) for h in hits)
 
 

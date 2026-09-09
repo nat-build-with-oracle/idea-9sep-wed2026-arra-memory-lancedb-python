@@ -78,6 +78,12 @@ CORS_HEADERS = {
 
 MCP_LOG_SIZE = 25
 
+# What a malformed memory field can raise on its way through the normalisers.
+# The original wrapped these routes in a bare `catch (error)` and answered 400,
+# so a body like {"workspace": 123} or {"importance": 1e999} was a client error
+# there and a 500 with a traceback here.
+BAD_INPUT = (ValueError, TypeError, AttributeError, OverflowError)
+
 
 def json_response(body, status: int = 200, headers: dict | None = None) -> JSONResponse:
     return JSONResponse(body, status_code=status, headers={**CORS_HEADERS, **(headers or {})})
@@ -465,7 +471,13 @@ def create_app() -> FastAPI:
         agents = await tp(list_agents, 50)
         return json_response({**listed, "agents": agents})
 
-    @app.get("/api/workspaces/{name}")
+    # `{name:path}`, not `{name}` — uvicorn percent-decodes the path before
+    # Starlette routes it, so a workspace named "Soul-Brews/arra" arrives with a
+    # real slash and the default `[^/]+` convertor does not match. The request
+    # then fell through to the SPA catch-all and answered 200 text/html, which the
+    # UI's fetch wrapper treats as success and chokes on parsing. Nothing stops a
+    # workspace name containing a slash, and the workspace list happily shows it.
+    @app.get("/api/workspaces/{name:path}")
     async def workspace(request: Request, name: str):
         auth = await gate(request)
         if not auth.ok:
@@ -503,7 +515,7 @@ def create_app() -> FastAPI:
         body = await read_json(request)
         try:
             memory = await tp(create_memory, {**body, "source": body.get("source") or "web"})
-        except ValueError as error:
+        except BAD_INPUT as error:
             return json_response({"error": "invalid", "message": str(error) or "invalid"}, 400)
         return json_response({"memory": memory}, 201)
 
@@ -515,7 +527,7 @@ def create_app() -> FastAPI:
         body = await read_json(request)
         try:
             memory = await tp(update_memory, memory_id, body)
-        except ValueError as error:
+        except BAD_INPUT as error:
             return json_response({"error": "invalid", "message": str(error) or "invalid"}, 400)
         return json_response({"memory": memory}) if memory else json_response({"error": "not_found"}, 404)
 
@@ -782,8 +794,18 @@ def create_app() -> FastAPI:
     async def static(path: str):
         target = "index.html" if path in ("", "/") else path
         if target != "index.html":
-            candidate = (STATIC_DIR / target).resolve()
-            if candidate.is_file() and STATIC_DIR.resolve() in candidate.parents:
+            # Every filesystem call here is guarded, because this route is the
+            # unauthenticated fallback and the path arrives already percent-decoded:
+            # `/%00` becomes a real NUL and `resolve()` raises ValueError, an
+            # over-long segment raises OSError, and either one was a 500 with a
+            # traceback that anyone could trigger in a loop. A path that cannot name
+            # a file simply is not a file — serve the shell.
+            try:
+                candidate = (STATIC_DIR / target).resolve()
+                is_file = candidate.is_file()
+            except (OSError, ValueError):
+                candidate, is_file = None, False
+            if is_file and candidate is not None and STATIC_DIR.resolve() in candidate.parents:
                 from fastapi.responses import FileResponse
 
                 return FileResponse(candidate, headers={"cache-control": "public, max-age=31536000, immutable"})

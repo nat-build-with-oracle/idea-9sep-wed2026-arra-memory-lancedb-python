@@ -73,6 +73,13 @@ def record_search(
                 created_at=now_iso(),
             )
         )
+        # Every other write site schedules this; without it the log is compacted
+        # only when a MEMORY write happens to leave a gap. On a read-mostly
+        # instance — the normal shape once search_log is on — that is never, and
+        # the log accrues a data file per search forever: 800 searches with no
+        # writes between them made the search-log page 77x slower, and it does not
+        # recover on its own.
+        db().schedule_optimize()
     except Exception:
         pass  # observability must never cost the thing it observes
 

@@ -687,7 +687,13 @@ def call_tool(name: str, args: dict) -> dict:
         return {**_text(body), "structuredContent": {"enabled": True, "stats": stats, "entries": entries}}
 
     if name == "forget_search_log":
-        modes = [v for v in (args.get("id"), args.get("olderThanDays"), args.get("all")) if v not in (None, False)]
+        # `is not` rather than `not in`, because `in` compares by equality and in
+        # Python `0 == False`. With `not in (None, False)` an olderThanDays of 0
+        # vanished from the mode list: `{olderThanDays: 0, all: true}` collapsed to
+        # one mode and cleared the WHOLE log, which is precisely the ambiguity this
+        # guard exists to refuse, and `{olderThanDays: 0}` alone collapsed to none
+        # and was refused even though the schema declares minimum 0.
+        modes = [v for v in (args.get("id"), args.get("olderThanDays"), args.get("all")) if v is not None and v is not False]
         if len(modes) != 1:
             return _tool_error("Give exactly one of: id, olderThanDays, or all.")
         if args.get("id"):

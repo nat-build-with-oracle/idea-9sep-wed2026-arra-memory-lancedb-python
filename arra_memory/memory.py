@@ -257,35 +257,61 @@ def search_memories(input: dict | None = None) -> list[dict]:
 # of relevance, not an error.
 FTS_COLUMNS = COLUMNS + ["_score"]
 
+# How many FTS candidates to consider before deciding the index is not selective
+# enough to be trusted for this query. See _fts_hits.
+FTS_CANDIDATES = 2000
 
-def _fts_hits(query: str, where: str, fetch: int) -> list[dict]:
+
+def contains_query(row: dict, needle: str) -> bool:
+    """The original's match condition, exactly: the query as a substring of
+    title, content or tags, case-insensitively."""
+    return (
+        needle in (row.get("title") or "").lower()
+        or needle in (row.get("content") or "").lower()
+        or needle in (row.get("tags") or "").lower()
+    )
+
+
+def _fts_hits(query: str, where: str) -> list[dict] | None:
     """
-    A PHRASE, not a bag of words — and an empty phrase result is a real answer.
+    Candidates from the full-text index, then the original's match condition
+    applied on top. Returns None when the index cannot answer completely and the
+    caller should scan instead.
 
-    The original ran one FTS5 MATCH with the whole query quoted as a literal
-    phrase, so "memory system" did not match a memory that merely contains both
-    words paragraphs apart. Falling back to a permissive AND when the phrase finds
-    nothing was tried and reverted: it made keyword recall find things by
-    coincidence, which erases the distinction between "keyword found nothing" and
-    "nothing is here" — the one signal a caller uses to decide whether a search by
-    meaning is still worth trying.
+    The index CANNOT be trusted on its own, and this is measured, not cautious.
+    LanceDB's n-gram tokenizer splits both the document and the query into
+    3-character sequences, and once rows are folded into the index (which happens
+    automatically a few seconds after any write) a `PhraseQuery` stops enforcing
+    that those sequences are adjacent: searching "kubernetes" in a five-memory
+    corpus returned "remember the november deadline", "the internet connection
+    dropped" and "tests are green today" — matched on the shared trigrams "ber",
+    "net" and "tes". Before the same rows were indexed, the flat scan behind the
+    identical call returned only the one memory that contains the word. A search
+    that quietly answers with unrelated memories is worse than a slow one, and it
+    is invisible: every result looks like a result.
 
-    MatchQuery is therefore reached only when PhraseQuery RAISES (an index that
-    cannot serve a phrase at all), never merely because it returned nothing.
+    So the index is used for what it is good at — narrowing — and the substring
+    test the original ran in SQL decides what actually matches. If the candidate
+    window fills up, the index has not narrowed anything and a true match could
+    be sitting outside the window, so the caller scans instead of guessing.
     """
     table = db().memories.raw
+    needle = query.lower()
     last_error: Exception | None = None
     for q in (PhraseQuery(query, "text"), MatchQuery(query, "text", operator="AND")):
         try:
             search = table.search(q, query_type="fts")
             if where:
                 search = search.where(where)
-            return search.select(FTS_COLUMNS).limit(fetch).to_list()
-        except Exception as error:  # a broken index degrades to the scan below
+            candidates = search.select(FTS_COLUMNS).limit(FTS_CANDIDATES).to_list()
+            if len(candidates) >= FTS_CANDIDATES:
+                return None
+            return [row for row in candidates if contains_query(row, needle)]
+        except Exception as error:  # a broken index degrades to the scan
             last_error = error
     if last_error:
         raise last_error
-    return []
+    return None
 
 
 def search_memories_nolog(input: dict | None = None) -> list[dict]:
@@ -296,30 +322,41 @@ def search_memories_nolog(input: dict | None = None) -> list[dict]:
     tag = (input.get("tag") or "").strip().lower()
     table = db().memories
 
-    # An id, or the front of one, is answered directly.
+    # An id, or the front of one, is answered directly — and deliberately NOT
+    # narrowed by the active scope. An id is unique and belongs to no facet, so
+    # the original looks it up with no filter at all: pasting an id must open that
+    # memory whatever chips happen to be ticked, and every generated
+    # recall_project_* tool pins a project, which would otherwise make "read this
+    # id" answer that the memory does not exist.
     if _ID_PREFIX.match(query):
-        found = table.rows(Q.and_(Q.starts_with("id", query.lower()), where), COLUMNS)
+        found = table.rows(Q.starts_with("id", query.lower()), COLUMNS)
         if found:
             return [to_memory(r) for r in _sort(found, ("updated_at", True))[:limit]]
 
     lowered = query.lower()
+    rows: list[dict] | None = None
     if len(query) >= TRIGRAM_MIN and not tag and db().has_fts():
         try:
-            hits = _fts_hits(query, where, max(limit * 4, 50))
+            rows = _fts_hits(query, where)
         except Exception:
-            hits = None
-        if hits is not None:
-            for hit in hits:
-                boost = 1.0
-                if lowered in (hit.get("title") or "").lower():
-                    boost += 2.0
-                if lowered in (hit.get("tags") or "").lower():
-                    boost += 1.0
-                hit["_rank"] = float(hit.get("_score") or 0.0) * boost
-            hits.sort(key=lambda r: int(r.get("importance") or 0), reverse=True)
-            hits.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
-            hits.sort(key=lambda r: r["_rank"], reverse=True)
-            return [to_memory(r) for r in hits[:limit]]
+            rows = None
+
+    if rows is not None:
+        # Weighting happens across every match, then the limit cuts — the order the
+        # original used. Doing it the other way round lets a bounded fetch window
+        # drop a memory whose TITLE is the query before the title weight can lift
+        # it: it never reaches the ranking that would have put it first.
+        for row in rows:
+            boost = 1.0
+            if lowered in (row.get("title") or "").lower():
+                boost += 2.0
+            if lowered in (row.get("tags") or "").lower():
+                boost += 1.0
+            row["_rank"] = float(row.get("_score") or 0.0) * boost
+        rows.sort(key=lambda r: int(r.get("importance") or 0), reverse=True)
+        rows.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
+        rows.sort(key=lambda r: r["_rank"], reverse=True)
+        return [to_memory(r) for r in rows[:limit]]
 
     rows = table.rows(where, COLUMNS)
 
@@ -772,13 +809,41 @@ def backfill_embeddings(limit: int = 50) -> int:
     return indexed
 
 
-def embedded_rows(limit: int = 500) -> tuple[list[dict], int]:
-    """Every memory that carries a vector, with the vector, most important first."""
+GRAPH_COLUMNS = [
+    "id",
+    "title",
+    "content",
+    "kind",
+    "workspace",
+    "project",
+    "created_by",
+    "importance",
+    "created_at",
+    "updated_at",
+]
+
+
+def embedded_rows(limit: int = 500, where: str | None = None) -> tuple[list[dict], int]:
+    """
+    Every memory that carries a vector, with the vector, most important first.
+
+    In two passes, and that is the point. LanceDB has no ORDER BY to push a limit
+    through, so the ranking columns are read first — cheap, no vectors — and only
+    the rows that survive the limit are read back with their vectors. Reading
+    everything and slicing afterwards materialised the whole embedded corpus as
+    Python floats: 10,000 embedded memories at 1024 dimensions took ~645MB of
+    transient memory to answer a request whose result is 500 nodes, and /api/graph
+    is served on a threadpool that will happily run dozens of those at once.
+    """
     table = db().memories
-    rows = table.rows(
-        Q.not_null("vector"),
-        ["id", "title", "content", "kind", "workspace", "project", "created_by", "importance", "created_at", "updated_at", "vector"],
-    )
-    rows.sort(key=lambda r: r["updated_at"], reverse=True)
-    rows.sort(key=lambda r: int(r["importance"] or 0), reverse=True)
-    return rows[:limit], table.count()
+    scope = Q.and_(Q.not_null("vector"), where or "")
+    ranking = table.rows(scope, ["id", "importance", "updated_at"])
+    ranking.sort(key=lambda r: r["updated_at"], reverse=True)
+    ranking.sort(key=lambda r: int(r["importance"] or 0), reverse=True)
+    wanted = [r["id"] for r in ranking[:limit]]
+    if not wanted:
+        return [], table.count()
+
+    rows = table.rows(Q.in_("id", wanted), GRAPH_COLUMNS + ["vector"])
+    by_id = {r["id"]: r for r in rows}
+    return [by_id[i] for i in wanted if i in by_id], table.count()

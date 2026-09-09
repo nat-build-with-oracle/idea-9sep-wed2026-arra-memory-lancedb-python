@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import html
 import json
+import math
 import re
 import secrets
 import time
@@ -101,7 +102,12 @@ read_kind = normalize_kind
 def normalize_importance(value) -> int:
     if value is None:
         return 3
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value:
+    # isfinite before int(): JSON maps 1e999 to inf, and int(inf) raises
+    # OverflowError, which is not a ValueError — so it escaped the route's handler
+    # and became a 500 where the original answers a clean 400.
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError("importance must be an integer from 1 to 5")
+    if int(value) != value:
         raise ValueError("importance must be an integer from 1 to 5")
     importance = int(value)
     if importance < 1 or importance > 5:
@@ -178,11 +184,15 @@ def slugify(value: str) -> str:
 
 
 def clamp_limit(value, fallback: int = 30) -> int:
+    """A malformed limit is the caller's typo, not a failure — the original
+    returned the default for anything non-finite, and so does this."""
     if value is None or isinstance(value, bool):
+        return fallback
+    if isinstance(value, float) and not math.isfinite(value):
         return fallback
     try:
         number = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return fallback
     return max(1, min(100, number))
 

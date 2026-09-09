@@ -99,10 +99,9 @@ def _link_edges(nodes: list[dict], contents: list[str]) -> list[dict]:
 
 def build_graph(scope: dict) -> dict:
     limit = max(1, min(2000, int(scope.get("limit") or 500)))
-    where = scope_filter(scope)
-    rows, total = embedded_rows(limit if not where else 2000)
-    if where:
-        rows = [r for r in rows if _in_scope(r, scope)][:limit]
+    # The scope goes to the database rather than being applied to a full read —
+    # a filtered graph must not cost more than an unfiltered one.
+    rows, total = embedded_rows(limit, scope_filter(scope))
 
     vectors: list[np.ndarray] = []
     nodes: list[dict] = []
