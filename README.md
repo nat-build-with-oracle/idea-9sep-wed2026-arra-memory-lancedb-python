@@ -42,6 +42,18 @@ Rebuilding the UI needs [Bun](https://bun.sh), and only when you change `ui/`:
 cd ui && bun install && bun run build      # → arra_memory/static/{main.js,app.css,index.html}
 ```
 
+### Or in a container
+
+```bash
+echo "OWNER_PASSPHRASE=$(openssl rand -base64 32)" > .env
+docker compose up -d --build
+```
+
+The image builds the UI in its own Bun stage, so Bun never ships in the runtime. `compose.yaml`
+binds to `127.0.0.1` on purpose — publishing this further is a decision to make deliberately, with
+a proxy or a tunnel in front. The corpus lives in the `arra-memory-data` volume: back it up, and do
+not point a second container at it.
+
 ## Connect Claude
 
 ```bash
@@ -183,6 +195,8 @@ arra_memory/
   static/       the built UI (generated — do not edit)
 ui/             the React source, copied verbatim from arra-memory-haos
 tests/
+Dockerfile      two stages: bun builds the UI, python runs it
+compose.yaml    loopback-bound, one named volume for the corpus
 ```
 
 ## Limits

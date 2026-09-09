@@ -1,0 +1,36 @@
+services:
+  arra-memory:
+    build: .
+    # Bound to loopback on purpose. Publishing this beyond the host is a
+    # decision to make deliberately, with a reverse proxy or a tunnel in front
+    # — not something a default should do for you.
+    ports:
+      - "127.0.0.1:8099:8099"
+    environment:
+      # Required. Generate one: openssl rand -base64 32
+      OWNER_PASSPHRASE: ${OWNER_PASSPHRASE:?set OWNER_PASSPHRASE, e.g. in a .env file beside this compose.yaml}
+      # Optional static bearer for scripts and CLI MCP clients.
+      API_TOKEN: ${API_TOKEN:-}
+      # Optional. Absolute origin, needed only when a remote MCP client must be
+      # given callback URLs — if this is behind a tunnel, set it to the public
+      # origin exactly, or every OAuth client breaks while curl keeps working.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      INSTANCE_NAME: ${INSTANCE_NAME:-Arra Memory}
+      # Optional semantic search. host.docker.internal reaches an Ollama running
+      # on the host; a LAN or mesh address works just as well.
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
+      SEARCH_LOG: ${SEARCH_LOG:-false}
+      GENERATED_TOOLS: ${GENERATED_TOOLS:-false}
+      LANGUAGE: ${LANGUAGE:-th}
+      THEME: ${THEME:-slate}
+    volumes:
+      # The whole corpus. Back this up; do not point a second container at it.
+      - arra-memory-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  arra-memory-data:
