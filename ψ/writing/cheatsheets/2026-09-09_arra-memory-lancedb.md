@@ -24,7 +24,9 @@ OWNER_PASSPHRASE="$(openssl rand -base64 32)" \
   .venv/bin/python -m arra_memory --port 8099
 
 # บน m5 mesh — ผูกกับ NetBird IP อย่างเดียว ไม่ใช่ 0.0.0.0 (LAN จะเห็นด้วย)
-OWNER_PASSPHRASE='live-demo-passphrase' DATA_DIR=/tmp/arra-live \
+# passphrase อ่านจากไฟล์เสมอ ไม่ใส่ใน argv (มันไปโผล่ใน shell history และใน transcript)
+#   umask 077 && openssl rand -base64 32 | tr -d '\n' > /tmp/arra-pass.txt
+OWNER_PASSPHRASE="$(cat /tmp/arra-pass.txt)" DATA_DIR=/tmp/arra-live \
 OLLAMA_URL='http://127.0.0.1:11434' EMBEDDING_MODEL=bge-m3 EMBEDDING_DIMENSIONS=1024 \
 SEARCH_LOG=true TRACE_LOG=true INSTANCE_NAME='Arra Memory (LanceDB)' \
 PUBLIC_URL='http://m5.oracle.netbird:8199' \
