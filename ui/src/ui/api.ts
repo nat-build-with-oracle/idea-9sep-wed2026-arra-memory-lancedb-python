@@ -116,6 +116,33 @@ export const api = {
         body: JSON.stringify(input),
       }),
 
+    /**
+     * Recall by MEANING and keyword together, reporting which actually ran.
+     *
+     * The archive used `search` below — a literal substring scan — while this
+     * endpoint sat unused, so a question typed into the box could not find a
+     * memory phrased differently, and replaying a logged semantic search from
+     * the log returned nothing at all.
+     */
+    recall: (params: {
+      query: string;
+      mode?: "hybrid" | "semantic" | "keyword";
+      kind?: string[];
+      workspace?: string[];
+      project?: string[];
+      createdBy?: string[];
+      tag?: string[];
+      match?: "any" | "all";
+      limit?: number;
+    }) =>
+      call<{
+        requestedMode: string;
+        effectiveMode: string;
+        fallback: { used: true; reason: string } | null;
+        memories: Memory[];
+        match?: string;
+      }>("/api/search", { method: "POST", body: JSON.stringify(params) }),
+
     /** One memory, by id — what the atlas opens when you click a soma. */
     get: (id: string) => call<{ memory: Memory }>(`/api/memories/${encodeURIComponent(id)}`),
 

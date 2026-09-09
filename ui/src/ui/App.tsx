@@ -64,6 +64,8 @@ export default function App() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** What recall ACTUALLY ran, so the page can say so rather than imply it. */
+  const [mode, setMode] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
 
@@ -101,11 +103,26 @@ export default function App() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // A typed question goes through RECALL, not the literal scan.
+      //
+      // The archive used to search by substring while /api/search — the same
+      // hybrid recall every MCP client gets — sat unused. So a question phrased
+      // differently from the memory found nothing here and everything over MCP,
+      // and replaying a logged semantic search from the log returned zero rows
+      // under a message explaining that search is literal. The corpus could
+      // answer; this screen just was not asking properly.
+      //
+      // An empty query is a LISTING, not a search: nothing to embed, and the
+      // keyword path is what returns the recent-and-important slice.
+      const searching = query.trim().length > 0;
       const [found, corpus, allFacets] = await Promise.all([
-        api.memories.search({ q: query, ...scope, tag: route.tag, limit: 100 }),
+        searching
+          ? api.memories.recall({ query, ...scope, tag: route.tag, limit: 100 })
+          : api.memories.search({ q: query, ...scope, tag: route.tag, limit: 100 }),
         api.stats(),
         api.facets(),
       ]);
+      setMode(searching ? ((found as { effectiveMode?: string }).effectiveMode ?? null) : null);
       setMemories(found.memories);
       setStats(corpus.stats);
       setFacets(allFacets);
@@ -327,6 +344,7 @@ export default function App() {
         memories={memories}
         loading={loading}
         error={error}
+        mode={mode}
         onCompose={() => setComposing(true)}
         // Following a [[reference]] searches for its title — the same resolution
         // the graph's link edges use, so clicking a link in the text and
@@ -393,6 +411,7 @@ function Archive({
   memories,
   loading,
   error,
+  mode,
   onCompose,
   onForget,
   onFollow,
@@ -409,6 +428,8 @@ function Archive({
   memories: Memory[];
   loading: boolean;
   error: string | null;
+  /** Which recall actually ran — reported, never assumed. Null while listing. */
+  mode: string | null;
   onCompose: () => void;
   onForget: (id: string) => void;
   onFollow: (title: string) => void;
@@ -480,6 +501,8 @@ function Archive({
             {loading
               ? t("archive.searching")
               : `${memories.length} ${t("archive.shown")}${
+                  mode ? ` · ${mode === "keyword" ? t("search.byKeyword") : t("search.byMeaning")}` : ""
+                }${
                   stats ? ` · ${stats.total} ${t("archive.inCorpus")}` : ""
                 }`}
           </p>
