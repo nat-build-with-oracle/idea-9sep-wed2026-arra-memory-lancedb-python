@@ -48,13 +48,16 @@ panel_admin: false
 # authenticates with Home Assistant's own session and rewrites the path under a
 # per-session token, which an MCP client has no way to hold.
 #
-# 8100, NOT 8099 — the original add-on already publishes 8099 on this host, and
-# two add-ons mapping the same host port means the second one fails to start
-# with a port conflict that reads like a crash.
+# 8101, NOT 8099 — the original add-on already publishes 8099. It is not 8100
+# either: on thor that belongs to arra_studio, and the collision does not show
+# up at install time, only at START, as "Cannot start app ... because port 8100
+# is already in use". This number is only a DEFAULT; the host port is per
+# install and can be moved from the add-on's Network panel (or
+# `install-remote.mjs port <slug> 8099/tcp <n>`) without touching this file.
 ports:
-  8099/tcp: 8100
+  8099/tcp: 8101
 ports_description:
-  8099/tcp: "MCP endpoint and API — 8100 on the host, since the libSQL add-on holds 8099"
+  8099/tcp: "MCP endpoint and API — 8101 on the host; 8099 and 8100 are taken on this fleet"
 
 # /data is the only path Supervisor persists across restarts AND includes in
 # backups. Its own directory, so the two add-ons never share a corpus.
