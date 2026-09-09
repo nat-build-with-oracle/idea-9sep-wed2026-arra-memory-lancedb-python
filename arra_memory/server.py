@@ -20,6 +20,7 @@ from . import VERSION, config
 from .auth import AuthConfig, authenticate, unauthorized_headers
 from .db import db
 from .cloud import asked_cloud, tag_cloud
+from .dig import chain, dig
 from .digest import build_digest, digest_windows
 from .fleet import fleet_enabled, start_fleet, stop_fleet
 from .graph import build_graph
@@ -805,6 +806,31 @@ def create_app() -> FastAPI:
             return unauthorized(origin_of(request))
         q = request.query_params
         return json_response(await tp(asked_cloud, _int(q.get("limit")) or 50, _int(q.get("days"))))
+
+    @app.get("/api/dig")
+    async def dig_route(request: Request):
+        """Everything the corpus knows about one subject, with provenance.
+        A read that writes: it files itself, and its sub-queries do not."""
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        q = request.query_params
+        try:
+            return json_response(await tp(dig, q.get("q") or q.get("subject") or "", _int(q.get("limit")) or 20, "web"))
+        except ValueError as error:
+            return json_response({"error": "invalid", "message": str(error)}, 400)
+
+    @app.get("/api/traces/chain")
+    async def chain_route(request: Request):
+        """One subject on a timeline, cause linked to effect. Untraced."""
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        q = request.query_params
+        try:
+            return json_response(await tp(chain, q.get("subject") or q.get("q") or "", _int(q.get("limit")) or 50))
+        except ValueError as error:
+            return json_response({"error": "invalid", "message": str(error)}, 400)
 
     @app.get("/api/timeline")
     async def timeline_route(request: Request):

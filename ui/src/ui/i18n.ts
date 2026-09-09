@@ -184,9 +184,15 @@ const STRINGS = {
 
   // ── empty states
   "empty.nothing": { th: "ไม่มีอะไรตรงกับที่กรอง", en: "Nothing matches that." },
+  "search.byMeaning": { th: "ค้นด้วยความหมาย", en: "by meaning" },
+  "search.byKeyword": { th: "ค้นแบบตรงตัวอักษร", en: "by keyword" },
+  "search.degraded": {
+    th: "ค้นแบบตรงตัวอักษรเท่านั้น — การค้นด้วยความหมายใช้ไม่ได้ตอนนี้",
+    en: "keyword only — search by meaning is unavailable right now",
+  },
   "empty.archive": { th: "ยังไม่มีความจำ", en: "No memories yet." },
   "empty.filteredHint": {
-    th: "การค้นหาเป็นการจับคู่ตัวอักษรตรง ๆ ในหัวข้อ เนื้อหา และแท็ก — ลองคำที่รู้ว่ามีอยู่",
+    th: "ลองคำที่รู้ว่ามีอยู่ หรือถามเป็นประโยค — ถ้าเปิด semantic ไว้ จะค้นด้วยความหมายให้ด้วย",
     en: "Recall is literal keyword matching across titles, content and tags — try a word you know is in there.",
   },
   "empty.emptyHint": {

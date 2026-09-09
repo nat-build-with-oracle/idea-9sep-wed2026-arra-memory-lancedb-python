@@ -39,6 +39,7 @@ from .searchlog import (
 )
 from .timerange import RELATIVE_RANGES, resolve_range
 from .cloud import asked_cloud, tag_cloud
+from .dig import chain, dig
 from .trace import forget_keyword, list_traces, record_trace, subject_report, timeline
 from .tools import UNDISABLEABLE, disabled_tools, set_tool_disabled
 from .utils import SUGGESTED_KINDS, parse_iso, slugify, to_iso
@@ -77,6 +78,9 @@ UNTRACED_TOOLS = frozenset(
         # every tag edit in a memory's history twice, the second time with no
         # `after` to show.
         "retag_memory",
+        # Same reason: dig writes its own row, with the verdict in it.
+        "dig",
+        "trace_chain",
     }
 )
 
@@ -447,6 +451,35 @@ BASE_TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 365, "description": "How many days back. Defaults to 30."}},
+        },
+    },
+    {
+        "name": "dig",
+        "description": (
+            "Everything this corpus knows about one subject, gathered from every source at once — carried as a "
+            "tag, present in the words, near by meaning, moved by a recent retagging, and how often it has been "
+            "asked for — with each item saying WHY it is in the answer. Use it instead of several searches when "
+            "the question is \"what do we have on X\". The `verdict` is the headline: `asked-never-answered` means "
+            "people keep asking and nothing in the corpus carries it, which is a gap worth filling."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"subject": {"type": "string"}, "limit": _LIMIT_50},
+            "required": ["subject"],
+        },
+        "annotations": {"readOnlyHint": False},
+    },
+    {
+        "name": "trace_chain",
+        "description": (
+            "One subject on a timeline, with cause linked to effect: asked, found nothing, a memory written, tags "
+            "moved, asked again and found. That sequence exists in no single log row — the log records events and "
+            "this reads them in order. Answers \"how long did we go without an answer to this, and what closed it\"."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"subject": {"type": "string"}, "limit": _LIMIT_100},
+            "required": ["subject"],
         },
     },
     {
@@ -843,6 +876,35 @@ def call_tool(name: str, args: dict) -> dict:
             for d in rows
         )
         return {**_text(body), "structuredContent": result}
+
+    if name == "dig":
+        try:
+            found = dig(str(args.get("subject") or ""), args.get("limit") or 20, "mcp")
+        except ValueError as error:
+            return _tool_error(str(error))
+        lines = [f"{i['score']:>3}  {i['source']:9}  {i['label']}  ({i['why']})" for i in found["items"]]
+        if found["weak"]:
+            lines.append("")
+            lines.append("weak — returned rather than hidden, a low score is a signal:")
+            lines += [f"{i['score']:>3}  {i['source']:9}  {i['label']}  ({i['why']})" for i in found["weak"]]
+        headline = {
+            "found": f"{len(found['items'])} strong result(s) for “{found['subject']}”",
+            "asked-never-answered": f"“{found['subject']}” has been asked for {found['asked']['count']}× and nothing in the corpus carries it.",
+            "unknown": f"Nothing on “{found['subject']}”, and nobody has asked for it before.",
+        }[found["verdict"]]
+        return {**_text(headline + ("\n\n" + "\n".join(lines) if lines else "")), "structuredContent": found}
+
+    if name == "trace_chain":
+        try:
+            story = chain(str(args.get("subject") or ""), args.get("limit") or 50)
+        except ValueError as error:
+            return _tool_error(str(error))
+        lines = [
+            f"{l['at']}  {l['surface']}/{l['tool']}  {l['hits']} hit(s)"
+            + ("".join(f"\n    ↳ tags moved on {c['memory'][:8]} — {c['change']}" for c in l["led_to"]))
+            for l in story["links"]
+        ]
+        return {**_text(story["summary"] + ("\n\n" + "\n".join(lines) if lines else "")), "structuredContent": story}
 
     if name == "trace_search":
         entries = list_traces(
