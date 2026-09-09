@@ -15,3 +15,4 @@ ui/node_modules/
 # editor
 .DS_Store
 uv.lock
+build/

@@ -40,7 +40,13 @@ jobs:
       # Supervisor builds an add-on with the ADD-ON DIRECTORY as the Docker
       # context, so the package has to be inside it. One script defines that
       # layout, and the local verification build uses the same output.
-      - run: ./arra-memory-lancedb/package.sh "${{ github.workspace }}/arra-memory-lancedb-build"
+      # Into a path INSIDE the repo, because the builder runs in a container
+      # that mounts the workspace at /data and resolves --target relative to it.
+      # An absolute host path made it look outside the mount, where there is no
+      # build.yaml — which it reports as the almost-helpful
+      # "No build information or from not provided. Using default base image."
+      # and then dies on a missing config.json.
+      - run: ./arra-memory-lancedb/package.sh "${{ github.workspace }}/build/arra-memory-lancedb"
 
       - uses: docker/login-action@v3
         with:
@@ -53,7 +59,7 @@ jobs:
         with:
           args: |
             --${{ matrix.arch }} \
-            --target ${{ github.workspace }}/arra-memory-lancedb-build \
+            --target build/arra-memory-lancedb \
             --image {arch}-addon-arra_memory_lancedb \
             --docker-hub ghcr.io/${{ github.repository_owner }} \
             --addon
