@@ -52,6 +52,51 @@ def size_for(count: int, largest: int) -> float:
     return round(MIN_PX + (MAX_PX - MIN_PX) * weight, 1)
 
 
+def _cloud(pairs: list[tuple[str, int]], key: str, extra: dict) -> dict:
+    """Shape a list of (label, count) into a cloud. One law, two callers."""
+    largest = max((n for _, n in pairs), default=0)
+    flat = largest > 0 and all(n == largest for _, n in pairs)
+    items = [
+        {
+            key: label,
+            "count": n,
+            "weight": 0.0 if flat else (round(math.log1p(n) / math.log1p(largest), 4) if largest else 0.0),
+            "size": MIN_PX if flat else size_for(n, largest),
+        }
+        for label, n in pairs
+    ]
+    return {
+        "items": items,
+        "max": largest,
+        "total": sum(n for _, n in pairs),
+        "distinct": len(items),
+        "uniform": flat,
+        "scale": {"min": MIN_PX, "max": MAX_PX, "law": "log1p"},
+        **extra,
+    }
+
+
+def asked_cloud(limit: int = 50, days: int | None = None) -> dict:
+    """
+    What has been ASKED of this corpus, sized by how often — the trace log's
+    subjects rather than the memories' tags.
+
+    A second cloud, and deliberately not a second law. The two answer questions
+    that only look alike: the tag cloud says what the corpus IS made of, this one
+    says what people keep coming to it for. Reading them side by side is the
+    point — a subject that is large here and absent there is a question the
+    corpus has never been able to answer, which is the most useful thing either
+    picture can tell you.
+
+    trace-node draws the same distinction with `by: "keyword"` on one endpoint;
+    kept as its own function here because the two read different tables.
+    """
+    from .trace import subject_counts
+
+    pairs = subject_counts(limit=limit, days=days)
+    return _cloud(pairs, "subject", {"days": days or 0})
+
+
 def tag_cloud(limit: int = 50, workspace: str | None = None) -> dict:
     """
     Every tag with its usage, its weight (0..1) and the size that follows.

@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool as tp
 from . import VERSION, config
 from .auth import AuthConfig, authenticate, unauthorized_headers
 from .db import db
-from .cloud import tag_cloud
+from .cloud import asked_cloud, tag_cloud
 from .digest import build_digest, digest_windows
 from .fleet import fleet_enabled, start_fleet, stop_fleet
 from .graph import build_graph
@@ -396,7 +396,8 @@ def create_app() -> FastAPI:
                 "workspace": q.getlist("workspace"),
                 "project": q.getlist("project"),
                 "createdBy": q.getlist("createdBy"),
-                "tag": q.get("tag"),
+                # getlist, like every sibling facet — see _tag_set in memory.py.
+                "tag": q.getlist("tag"),
                 "limit": _int(q.get("limit")),
                 "source": "web",
             },
@@ -405,7 +406,7 @@ def create_app() -> FastAPI:
         # this endpoint on every filter change and on load, and recording those
         # would bury the handful of rows worth reading under a wall of
         # "(no query) → 7 results".
-        _trace_read(q.get("q"), q.get("tag"), len(memories), started, auth.method)
+        _trace_read(q.get("q"), ", ".join(q.getlist("tag")), len(memories), started, auth.method)
         return json_response({"memories": memories, "count": len(memories)})
 
     @app.get("/api/digest")
@@ -765,6 +766,15 @@ def create_app() -> FastAPI:
             return unauthorized(origin_of(request))
         q = request.query_params
         return json_response(await tp(tag_cloud, _int(q.get("limit")) or 50, q.get("workspace")))
+
+    @app.get("/api/traces/cloud")
+    async def asked(request: Request):
+        """What has been asked for, sized by how often — the trace log's own cloud."""
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        q = request.query_params
+        return json_response(await tp(asked_cloud, _int(q.get("limit")) or 50, _int(q.get("days"))))
 
     @app.get("/api/timeline")
     async def timeline_route(request: Request):

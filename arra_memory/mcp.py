@@ -36,7 +36,7 @@ from .searchlog import (
     search_log_stats,
 )
 from .timerange import RELATIVE_RANGES, resolve_range
-from .cloud import tag_cloud
+from .cloud import asked_cloud, tag_cloud
 from .trace import forget_keyword, list_traces, record_trace, subject_report, timeline
 from .tools import UNDISABLEABLE, disabled_tools, set_tool_disabled
 from .utils import SUGGESTED_KINDS, parse_iso, slugify, to_iso
@@ -375,13 +375,23 @@ BASE_TOOLS: list[dict] = [
     {
         "name": "tag_cloud",
         "description": (
-            "The corpus's tags with how often each is used, sized on a log scale so the shape of the archive is "
-            "legible at a glance rather than read one count at a time. Use it before searching to see what the "
-            "corpus is actually ABOUT; use list_tags when you only need the names."
+            "The shape of the corpus, sized on a log scale so it is legible at a glance rather than read one "
+            "count at a time. `by: tags` (the default) is what the corpus IS MADE OF; `by: asked` is what people "
+            "keep COMING TO IT FOR, from the trace log. Reading them together is the point — a subject that is "
+            "large in `asked` and absent from `tags` is a question this corpus has never been able to answer."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {**WORKSPACE_FILTER_PROP, "limit": _LIMIT_100},
+            "properties": {
+                "by": {
+                    "type": "string",
+                    "enum": ["tags", "asked"],
+                    "description": "`tags` = the memories' own tags. `asked` = the subjects in the trace log.",
+                },
+                "days": {"type": "integer", "minimum": 1, "maximum": 365, "description": "For `asked`: only this many days back."},
+                **WORKSPACE_FILTER_PROP,
+                "limit": _LIMIT_100,
+            },
         },
     },
     {
@@ -735,14 +745,21 @@ def call_tool(name: str, args: dict) -> dict:
         return {**_text(body), "structuredContent": {"agents": agents, "workspace": args.get("workspace") or ""}}
 
     if name == "tag_cloud":
-        cloud = tag_cloud(args.get("limit") or 50, args.get("workspace"))
+        asked = str(args.get("by") or "tags") == "asked"
+        key = "subject" if asked else "tag"
+        cloud = asked_cloud(args.get("limit") or 50, args.get("days")) if asked else tag_cloud(args.get("limit") or 50, args.get("workspace"))
         items = cloud["items"]
         if not items:
-            return {**_text("No tags yet."), "structuredContent": cloud}
-        widest = max(len(i["tag"]) for i in items)
-        body = "\n".join(f"{i['tag'].ljust(widest)}  {str(i['count']).rjust(4)}  {'█' * max(1, round(i['weight'] * 12))}" for i in items)
-        note = "\n\nEvery tag is used equally often, so none is drawn larger than another." if cloud["uniform"] else ""
-        return {**_text(f"{cloud['distinct']} tags across {cloud['total']} uses\n\n{body}{note}"), "structuredContent": cloud}
+            return {**_text("Nothing has been asked yet." if asked else "No tags yet."), "structuredContent": cloud}
+        widest = max(len(i[key]) for i in items)
+        body = "\n".join(f"{i[key].ljust(widest)}  {str(i['count']).rjust(4)}  {'█' * max(1, round(i['weight'] * 12))}" for i in items)
+        note = "\n\nEvery entry has the same count, so none is drawn larger than another." if cloud["uniform"] else ""
+        heading = (
+            f"{cloud['distinct']} subjects asked {cloud['total']} times"
+            if asked
+            else f"{cloud['distinct']} tags across {cloud['total']} uses"
+        )
+        return {**_text(f"{heading}\n\n{body}{note}"), "structuredContent": cloud}
 
     if name == "timeline":
         result = timeline(args.get("days") or 30)

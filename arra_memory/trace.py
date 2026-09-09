@@ -215,6 +215,27 @@ def list_traces(
     return [_to_entry(r) for r in rows[:capped]]
 
 
+def subject_counts(limit: int = 50, days: int | None = None) -> list[tuple[str, int]]:
+    """
+    How often each subject has been asked for, busiest first.
+
+    Only rows that carry a subject — a call with no intent (memory_stats,
+    list_tags) is a real trace row and not a thing anyone asked ABOUT, so
+    counting it would put an empty label in the cloud.
+    """
+    where = Q.and_(Q.ne("subject", ""), f"at >= {Q.lit(to_iso(datetime.now(timezone.utc) - timedelta(days=days)))}" if days else None)
+    try:
+        rows = db().traces.rows(where or None, ["subject"])
+    except Exception:
+        return []
+    counts: dict[str, int] = {}
+    for r in rows:
+        subject = r["subject"]
+        if subject:
+            counts[subject] = counts.get(subject, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(1, min(200, limit))]
+
+
 def trace_stats() -> dict:
     try:
         rows = db().traces.rows(columns=["at", "kind", "outcome", "surface"])

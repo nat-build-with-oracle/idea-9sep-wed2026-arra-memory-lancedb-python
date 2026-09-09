@@ -1,5 +1,6 @@
 import type {
   AgentFacet,
+  AskedCloud,
   Cloud,
   Timeline,
   TraceEntry,
@@ -156,6 +157,8 @@ export const api = {
    * not observe itself, and this panel polls.
    */
   traces: {
+    /** What has been asked for, sized by how often. Untraced, like every trace read. */
+    cloud: (days?: number) => call<AskedCloud>(`/api/traces/cloud${days ? `?days=${days}` : ""}`),
     list: (params: { limit?: number; q?: string; kind?: string; tool?: string; outcome?: string; surface?: string } = {}) => {
       const s = new URLSearchParams();
       for (const [k, v] of Object.entries(params)) if (v) s.set(k, String(v));

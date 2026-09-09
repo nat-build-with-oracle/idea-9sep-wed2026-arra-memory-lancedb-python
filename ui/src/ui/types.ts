@@ -210,6 +210,24 @@ export interface CloudItem {
   size: number;
 }
 
+/** The same shape keyed by `subject` — what has been ASKED for, not what is stored. */
+export interface AskedItem {
+  subject: string;
+  count: number;
+  weight: number;
+  size: number;
+}
+
+export interface AskedCloud {
+  items: AskedItem[];
+  max: number;
+  total: number;
+  distinct: number;
+  uniform: boolean;
+  scale: { min: number; max: number; law: string };
+  days: number;
+}
+
 export interface Cloud {
   items: CloudItem[];
   max: number;

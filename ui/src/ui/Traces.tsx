@@ -3,7 +3,7 @@ import { api } from "./api";
 import { timeAgo } from "./components";
 import { t } from "./i18n";
 import { Panel } from "./Menu";
-import type { Timeline, TraceEntry, TraceStats } from "./types";
+import type { AskedCloud, Timeline, TraceEntry, TraceStats } from "./types";
 
 /**
  * The station log: what was asked of this corpus, and what came back.
@@ -66,10 +66,47 @@ function Sparkline({ timeline }: { timeline: Timeline }) {
   );
 }
 
+/**
+ * The second cloud: what has been ASKED for.
+ *
+ * The archive's cloud says what the corpus is made of; this one says what people
+ * keep coming to it for, and they are worth reading side by side. A subject that
+ * is large here and missing from the tag cloud is a question this corpus has
+ * never been able to answer — which is the most useful thing either picture
+ * gives you, and neither can show it alone.
+ *
+ * Same law, same 11–20px, computed by the same function on the server.
+ */
+function AskedCloudRow({ cloud, onPick }: { cloud: AskedCloud; onPick: (subject: string) => void }) {
+  if (!cloud.items.length) return null;
+  return (
+    <div className="facet-row mb-4">
+      <span className="eyebrow">{t("trace.asked")}</span>
+      <div className="flex flex-wrap items-baseline gap-1.5">
+        {cloud.items.map((i) => (
+          <button
+            key={i.subject}
+            type="button"
+            className="chip chip-cloud"
+            style={{ fontSize: `${i.size}px` }}
+            aria-label={`${i.subject}, ${i.count}`}
+            title={`${i.subject} — ${i.count}`}
+            onClick={() => onPick(i.subject)}
+          >
+            <span>{i.subject}</span>
+            <span className="sr-only">{i.count}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Traces({ onClose, nav }: { onClose: () => void; nav?: React.ReactNode }) {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
   const [stats, setStats] = useState<TraceStats | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
+  const [asked, setAsked] = useState<AskedCloud | null>(null);
   const [filter, setFilter] = useState("");
   const [outcome, setOutcome] = useState<string>("");
   const [surface, setSurface] = useState<string>("");
@@ -81,7 +118,7 @@ export function Traces({ onClose, nav }: { onClose: () => void; nav?: React.Reac
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const [log, line] = await Promise.all([
+      const [log, line, cloud] = await Promise.all([
         api.traces.list({
           limit: 200,
           q: filter || undefined,
@@ -89,10 +126,12 @@ export function Traces({ onClose, nav }: { onClose: () => void; nav?: React.Reac
           surface: surface || undefined,
         }),
         api.timeline(30),
+        api.traces.cloud(),
       ]);
       setEntries(log.entries);
       setStats(log.stats);
       setTimeline(line);
+      setAsked(cloud);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the trace log.");
@@ -224,6 +263,9 @@ export function Traces({ onClose, nav }: { onClose: () => void; nav?: React.Reac
       )}
 
       {timeline && <Sparkline timeline={timeline} />}
+      {/* Clicking a subject filters the log to it — the cloud is a read control,
+          the same way every tag chip in the archive is. */}
+      {asked && <AskedCloudRow cloud={asked} onPick={(s) => setFilter(s)} />}
 
       {!entries.length ? (
         <p className="py-14 text-center text-sm text-dim">{t("trace.empty")}</p>
