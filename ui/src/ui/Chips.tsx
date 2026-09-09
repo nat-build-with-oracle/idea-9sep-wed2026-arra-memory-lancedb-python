@@ -41,6 +41,16 @@ import type { Facets, Scope } from "./types";
 type FacetKey = "kind" | "workspace" | "project" | "createdBy" | "tag";
 
 /**
+ * How many tags the cloud shows before folding.
+ *
+ * Higher than every other row, and that is the point of a cloud: sizes only
+ * carry information across a population, so showing ten of forty tags would
+ * draw a size relation over an arbitrary tenth of the vocabulary. Wider is also
+ * cheap here — a sized tag is still one short word.
+ */
+const CLOUD_TOP = 40;
+
+/**
  * A row wider than this folds — per facet, because chip WIDTH varies more than
  * chip count. Ten tags fit one line; ten projects are ten full repo URLs and
  * take four. The unit that matters is lines consumed, and count is only a
@@ -53,13 +63,13 @@ const FACETS: Record<FacetKey, { top: number; layout: "inline" | "table" }> = {
   // a wrapped flow. Four of them already fill two lines.
   project: { top: 4, layout: "table" },
   createdBy: { top: 8, layout: "inline" },
-  tag: { top: 10, layout: "inline" },
+  tag: { top: CLOUD_TOP, layout: "inline" },
 };
 
 interface Row {
   key: FacetKey;
   label: string;
-  values: Array<{ value: string; count: number }>;
+  values: Array<{ value: string; count: number; size?: number }>;
 }
 
 export function Chips({
@@ -100,7 +110,8 @@ export function Chips({
     {
       key: "tag",
       label: t("facet.tag"),
-      values: facets.tags.map((x) => ({ value: x.tag, count: x.count })),
+      // `size` comes from the server already resolved — see arra_memory/cloud.py.
+      values: facets.tags.map((x) => ({ value: x.tag, count: x.count, size: x.size })),
     },
   ] satisfies Row[]).filter((r) => r.values.length > 0);
 
@@ -128,21 +139,44 @@ export function Chips({
   return (
     <div className="mt-3 flex flex-col gap-1.5">
       {rows.map((row) => {
-        const chip = (v: { value: string; count: number }, cls = "chip") => {
+        const chip = (v: { value: string; count: number; size?: number }, cls = "chip") => {
           const on = selected(row.key).includes(v.value);
+          // The TAG row is a cloud; every other row is a menu.
+          //
+          // That split is not a compromise, it is the distinction digger-node
+          // drew: a controlled vocabulary renders in its own order because the
+          // order is the information, and a free-tagging one renders by usage
+          // because usage is. kind/workspace/project/agent are closed sets a
+          // person navigates; tags are an open vocabulary whose SHAPE is the
+          // thing worth seeing.
+          const cloud = row.key === "tag" && v.size !== undefined;
           return (
             <button
               key={v.value}
               type="button"
-              className={cls}
+              className={cloud ? `${cls} chip-cloud` : cls}
               aria-pressed={on}
               onClick={() => toggle(row.key, v.value)}
-              // The kind row is the one place colour carries meaning rather
-              // than state, so an unticked kind chip keeps its hue.
-              style={row.key === "kind" && !on ? { color: kindColor(v.value) } : undefined}
+              // The count is in the accessible name because it stops being
+              // readable as text once it is carried by size instead.
+              aria-label={cloud ? `${v.value}, ${v.count}` : undefined}
+              title={cloud ? `${v.value} — ${v.count}` : undefined}
+              style={
+                cloud
+                  ? { fontSize: `${v.size}px` }
+                  : // The kind row is the one place colour carries meaning rather
+                    // than state, so an unticked kind chip keeps its hue.
+                    row.key === "kind" && !on
+                    ? { color: kindColor(v.value) }
+                    : undefined
+              }
             >
               <span>{v.value}</span>
-              <span className="chip-count">{v.count}</span>
+              {/* A cloud states usage by size. Printing the number beside it too
+                  says the same thing twice and takes the width that let the
+                  cloud be wide enough to be a cloud — so the count moves to the
+                  title and the accessible name, where it is still reachable. */}
+              {cloud ? <span className="sr-only">{v.count}</span> : <span className="chip-count">{v.count}</span>}
             </button>
           );
         };

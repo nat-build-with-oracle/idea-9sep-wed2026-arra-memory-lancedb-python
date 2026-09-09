@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from . import VERSION, config
 from .digest import build_digest, digest_windows
@@ -35,6 +36,8 @@ from .searchlog import (
     search_log_stats,
 )
 from .timerange import RELATIVE_RANGES, resolve_range
+from .cloud import asked_cloud, tag_cloud
+from .trace import forget_keyword, list_traces, record_trace, subject_report, timeline
 from .tools import UNDISABLEABLE, disabled_tools, set_tool_disabled
 from .utils import SUGGESTED_KINDS, parse_iso, slugify, to_iso
 
@@ -54,6 +57,44 @@ def negotiate_protocol(requested) -> str:
     if requested in SUPPORTED_PROTOCOL_VERSIONS:
         return requested
     return requested if re.fullmatch(r"\d{4}-\d{2}-\d{2}", requested) else PREFERRED_PROTOCOL_VERSION
+
+
+# Reads of the trace layer itself. An observation must not observe itself: left
+# untraced, `trace_search` would find its own previous call every time, and the
+# log would grow from being read.
+UNTRACED_TOOLS = frozenset(
+    {"trace_search", "trace_subject", "forget_trace_keyword", "list_search_log", "list_tools", "timeline"}
+)
+
+
+def _trace_call(name: str, args: dict, started: float, result: dict | None = None, error: Exception | None = None) -> None:
+    if name in UNTRACED_TOOLS:
+        return
+    structured = (result or {}).get("structuredContent") or {}
+    subject, subject_kind = "", ""
+    for key, kind in (("query", "keyword"), ("tag", "term"), ("id", "item"), ("name", "term")):
+        if args.get(key):
+            subject, subject_kind = str(args[key]), kind
+            break
+    hits = structured.get("count")
+    if hits is None:
+        hits = len(structured.get("memories") or structured.get("entries") or structured.get("tags") or [])
+    failed = bool(error) or bool((result or {}).get("isError"))
+    record_trace(
+        kind="mcp",
+        surface="mcp",
+        tool=name,
+        subject=subject,
+        subject_kind=subject_kind,
+        outcome="error" if failed else ("empty" if not hits and subject else "ok"),
+        hits=int(hits or 0),
+        duration_ms=(time.monotonic() - started) * 1000,
+        mode=str(structured.get("matchMode") or ""),
+        who="claude",
+        input=args,
+        result=None if failed else structured.get("memory") or structured.get("count"),
+        error=str(error) if error else (((result or {}).get("content") or [{}])[0].get("text", "") if failed else ""),
+    )
 
 
 def _ok(id_, result):
@@ -330,6 +371,84 @@ BASE_TOOLS: list[dict] = [
             },
             "required": ["from", "to"],
         },
+    },
+    {
+        "name": "tag_cloud",
+        "description": (
+            "The shape of the corpus, sized on a log scale so it is legible at a glance rather than read one "
+            "count at a time. `by: tags` (the default) is what the corpus IS MADE OF; `by: asked` is what people "
+            "keep COMING TO IT FOR, from the trace log. Reading them together is the point — a subject that is "
+            "large in `asked` and absent from `tags` is a question this corpus has never been able to answer."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "by": {
+                    "type": "string",
+                    "enum": ["tags", "asked"],
+                    "description": "`tags` = the memories' own tags. `asked` = the subjects in the trace log.",
+                },
+                "days": {"type": "integer", "minimum": 1, "maximum": 365, "description": "For `asked`: only this many days back."},
+                **WORKSPACE_FILTER_PROP,
+                "limit": _LIMIT_100,
+            },
+        },
+    },
+    {
+        "name": "timeline",
+        "description": (
+            "What was written and what was asked, per day. Answers “when was this corpus busy” and “what was I "
+            "doing that week” — the same data digest returns as prose, on a time axis instead."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 365, "description": "How many days back. Defaults to 30."}},
+        },
+    },
+    {
+        "name": "trace_search",
+        "description": (
+            "Search the trace log — every tool call and every read that carried an intent, with what came back. "
+            "This is the corpus's memory of being USED, which is a different question from what it contains: use it "
+            "for “have I asked this before”, “what did that client actually send”, and “which searches returned nothing”."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "maxLength": 240, "description": "Text to find in the logged tool, subject, mode or error."},
+                "kind": {"type": "string", "description": "mcp, read, or admin."},
+                "tool": {"type": "string", "description": "Only calls to this tool."},
+                "outcome": {"type": "string", "enum": ["ok", "empty", "error"], "description": "`empty` is the interesting one — a search that found nothing."},
+                "surface": {"type": "string", "enum": ["mcp", "web"], "description": "Which door the call came through."},
+                "since": {"type": "string", "description": "ISO-8601 lower bound, e.g. 2026-09-01."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+            },
+        },
+    },
+    {
+        "name": "trace_subject",
+        "description": (
+            "Everything the log knows about one subject — how often it has been asked for, when it was first and "
+            "last asked, through which door, and on which days. The honest answer to “have we been here before”."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"subject": {"type": "string", "description": "A keyword, tag, or id that was searched for."}},
+            "required": ["subject"],
+        },
+    },
+    {
+        "name": "forget_trace_keyword",
+        "description": (
+            "Delete every trace row recorded under one keyword. The trace log retains what was searched for "
+            "indefinitely, so there is exactly one way to drop a subject, and the forget itself is filed in the log."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"keyword": {"type": "string", "description": "The keyword to forget, as it was searched."}},
+            "required": ["keyword"],
+        },
+        "annotations": {"destructiveHint": True, "idempotentHint": True},
     },
     {
         "name": "list_fleet",
@@ -625,6 +744,79 @@ def call_tool(name: str, args: dict) -> dict:
         body = "\n".join(f"{a['agent']} — {a['count']} memories, last {a['latest']}" for a in agents) or f"No memories record who wrote them{where}."
         return {**_text(body), "structuredContent": {"agents": agents, "workspace": args.get("workspace") or ""}}
 
+    if name == "tag_cloud":
+        asked = str(args.get("by") or "tags") == "asked"
+        key = "subject" if asked else "tag"
+        cloud = asked_cloud(args.get("limit") or 50, args.get("days")) if asked else tag_cloud(args.get("limit") or 50, args.get("workspace"))
+        items = cloud["items"]
+        if not items:
+            return {**_text("Nothing has been asked yet." if asked else "No tags yet."), "structuredContent": cloud}
+        widest = max(len(i[key]) for i in items)
+        body = "\n".join(f"{i[key].ljust(widest)}  {str(i['count']).rjust(4)}  {'█' * max(1, round(i['weight'] * 12))}" for i in items)
+        note = "\n\nEvery entry has the same count, so none is drawn larger than another." if cloud["uniform"] else ""
+        heading = (
+            f"{cloud['distinct']} subjects asked {cloud['total']} times"
+            if asked
+            else f"{cloud['distinct']} tags across {cloud['total']} uses"
+        )
+        return {**_text(f"{heading}\n\n{body}{note}"), "structuredContent": cloud}
+
+    if name == "timeline":
+        result = timeline(args.get("days") or 30)
+        rows = [d for d in result["days"] if d["written"] or d["traced"]]
+        if not rows:
+            return {**_text(f"Nothing written or asked between {result['from']} and {result['to']}."), "structuredContent": result}
+        peak = max(d["written"] + d["traced"] for d in rows) or 1
+        body = "\n".join(
+            f"{d['day']}  {'▇' * max(1, round((d['written'] + d['traced']) / peak * 20))}  {d['written']} written · {d['traced']} asked"
+            for d in rows
+        )
+        return {**_text(body), "structuredContent": result}
+
+    if name == "trace_search":
+        entries = list_traces(
+            limit=args.get("limit") or 50,
+            query=args.get("query"),
+            kind=args.get("kind"),
+            tool=args.get("tool"),
+            outcome=args.get("outcome"),
+            surface=args.get("surface"),
+            since=args.get("since"),
+        )
+        if not entries:
+            return {**_text("Nothing in the trace log matched."), "structuredContent": {"count": 0, "entries": []}}
+        body = "\n".join(
+            f"{e['at']}  {e['surface']}/{e['kind']}  {e['tool']}"
+            + (f"  “{e['subject']}”" if e["subject"] else "")
+            + f"  → {e['hits']} hit(s), {e['durationMs']}ms"
+            + (f", {e['mode']}" if e["mode"] else "")
+            + (f"  ERROR: {e['error']}" if e["outcome"] == "error" else "")
+            for e in entries
+        )
+        return {**_text(body), "structuredContent": {"count": len(entries), "entries": entries}}
+
+    if name == "trace_subject":
+        report = subject_report(str(args.get("subject") or ""))
+        if not report["count"]:
+            return {**_text(f"Nothing has been asked under “{report['subject']}”."), "structuredContent": report}
+        days = " · ".join(f"{d['day']}×{d['count']}" for d in report["days"][-14:])
+        body = (
+            f"“{report['subject']}” — asked {report['count']} time(s)\n"
+            f"first {report['first']}\nlast  {report['last']}\n"
+            f"by kind: {report['byKind']}\nby surface: {report['bySurface']}\n{days}"
+        )
+        return {**_text(body), "structuredContent": report}
+
+    if name == "forget_trace_keyword":
+        try:
+            removed = forget_keyword(str(args.get("keyword") or ""))
+        except ValueError as error:
+            return _tool_error(str(error))
+        return {
+            **_text(f"Forgot {removed} trace row(s) recorded under “{args['keyword']}”."),
+            "structuredContent": {"keyword": args["keyword"], "deleted": removed},
+        }
+
     if name == "list_fleet":
         r = list_fleet()
         if not r["ok"]:
@@ -814,8 +1006,16 @@ def handle_mcp(request: dict):
             args = {}
         if name in disabled_tools():
             return _ok(id_, _tool_error(f"{name} is switched off for this connector."))
+
+        # Traced HERE, around the dispatcher, so no tool can be added without
+        # being logged — and on BOTH paths, because the call that failed is the
+        # one you most want to find later.
+        started = time.monotonic()
         try:
-            return _ok(id_, call_tool(name, args))
+            result = call_tool(name, args)
         except Exception as error:
+            _trace_call(name, args, started, error=error)
             return _ok(id_, _tool_error(str(error) or "tool failed"))
+        _trace_call(name, args, started, result=result)
+        return _ok(id_, result)
     return _fail(id_, -32601, f"Method not found: {method}")

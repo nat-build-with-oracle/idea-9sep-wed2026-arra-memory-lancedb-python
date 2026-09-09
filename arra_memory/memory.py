@@ -118,6 +118,18 @@ def scope_label(value) -> str:
     return ", ".join(v for v in values if v)
 
 
+def _tag_set(value) -> list[str]:
+    """Tags as a lowercased set. A bare string is one tag and stays the shape
+    every MCP tool passes; a list is "any of these"."""
+    values = value if isinstance(value, list) else ([] if value is None else [value])
+    out: list[str] = []
+    for v in values:
+        t = str(v).strip().lower()
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
 def _scope_of(input: dict) -> dict:
     return {k: input.get(k) for k in ("kind", "workspace", "project", "createdBy")}
 
@@ -319,7 +331,12 @@ def search_memories_nolog(input: dict | None = None) -> list[dict]:
     query = (input.get("query") or "").strip()[:240]
     limit = clamp_limit(input.get("limit"))
     where = scope_filter(_scope_of(input))
-    tag = (input.get("tag") or "").strip().lower()
+    # A SET, like every other facet: within a facet it is OR, across facets AND.
+    # This was the one filter that read a single value while its siblings read
+    # lists, so ticking two tags lit both chips and quietly filtered by whichever
+    # arrived last — inherited from the original, and much easier to hit now that
+    # the tag row is a cloud people click.
+    tags = _tag_set(input.get("tag"))
     table = db().memories
 
     # An id, or the front of one, is answered directly — and deliberately NOT
@@ -335,7 +352,7 @@ def search_memories_nolog(input: dict | None = None) -> list[dict]:
 
     lowered = query.lower()
     rows: list[dict] | None = None
-    if len(query) >= TRIGRAM_MIN and not tag and db().has_fts():
+    if len(query) >= TRIGRAM_MIN and not tags and db().has_fts():
         try:
             rows = _fts_hits(query, where)
         except Exception:
@@ -365,8 +382,11 @@ def search_memories_nolog(input: dict | None = None) -> list[dict]:
             lowered in r["title"].lower() or lowered in r["content"].lower() or lowered in (r["tags"] or "").lower()
         ):
             return False
-        if tag and f'"{tag}"' not in (r["tags"] or "").lower():
-            return False
+        if tags:
+            # Quoted so "ha" cannot match "haos" — the tags column is a JSON array.
+            stored = (r["tags"] or "").lower()
+            if not any(f'"{t}"' in stored for t in tags):
+                return False
         return True
 
     def rank(r: dict) -> int:
@@ -536,9 +556,25 @@ def list_facets() -> dict:
             {"project": p, "count": n, "latest": latest} for p, n, latest in _grouped(rows, "project")[:50]
         ],
         "agents": [{"agent": a, "count": n, "latest": latest} for a, n, latest in _grouped(rows, "created_by")[:50]],
-        "tags": [{"tag": t, "count": n} for t, n in sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))[:50]],
+        # Tags carry their cloud size, so the filter bar can draw a real cloud
+        # from the ONE request it already makes. Computed here rather than in the
+        # browser because arra_memory/cloud.py is the only place the sizing law
+        # is allowed to live — the MCP tool and this page must not be able to
+        # disagree about how big a tag is.
+        "tags": _sized_tags(sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))[:50]),
         "total": len(rows),
     }
+
+
+def _sized_tags(pairs: list[tuple[str, int]]) -> list[dict]:
+    from .cloud import MIN_PX, size_for
+
+    largest = max((n for _, n in pairs), default=0)
+    uniform = largest > 0 and all(n == largest for _, n in pairs)
+    return [
+        {"tag": tag, "count": n, "size": MIN_PX if uniform else size_for(n, largest)}
+        for tag, n in pairs
+    ]
 
 
 def list_kinds() -> list[dict]:

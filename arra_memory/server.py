@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ from starlette.concurrency import run_in_threadpool as tp
 from . import VERSION, config
 from .auth import AuthConfig, authenticate, unauthorized_headers
 from .db import db
+from .cloud import asked_cloud, tag_cloud
 from .digest import build_digest, digest_windows
 from .fleet import fleet_enabled, start_fleet, stop_fleet
 from .graph import build_graph
@@ -62,6 +64,16 @@ from .searchlog import (
 )
 from .session import COOKIE_NAME, clear_session_cookie, issue_session, revoke_session, session_cookie
 from .tools import UNDISABLEABLE, enable_all_tools, set_tool_disabled
+from .trace import (
+    clear_traces,
+    forget_keyword,
+    list_traces,
+    prune_traces,
+    record_trace,
+    subject_report,
+    timeline,
+    trace_stats,
+)
 from .utils import escape_html, random_token, read_cookie, timing_safe_equal
 
 log = logging.getLogger("arra-memory")
@@ -375,6 +387,7 @@ def create_app() -> FastAPI:
         if not auth.ok:
             return unauthorized(origin_of(request))
         q = request.query_params
+        started = time.monotonic()
         memories = await tp(
             search_memories,
             {
@@ -383,11 +396,17 @@ def create_app() -> FastAPI:
                 "workspace": q.getlist("workspace"),
                 "project": q.getlist("project"),
                 "createdBy": q.getlist("createdBy"),
-                "tag": q.get("tag"),
+                # getlist, like every sibling facet — see _tag_set in memory.py.
+                "tag": q.getlist("tag"),
                 "limit": _int(q.get("limit")),
                 "source": "web",
             },
         )
+        # A read is traced only when it carries an INTENT. The archive refetches
+        # this endpoint on every filter change and on load, and recording those
+        # would bury the handful of rows worth reading under a wall of
+        # "(no query) → 7 results".
+        _trace_read(q.get("q"), ", ".join(q.getlist("tag")), len(memories), started, auth.method)
         return json_response({"memories": memories, "count": len(memories)})
 
     @app.get("/api/digest")
@@ -548,25 +567,30 @@ def create_app() -> FastAPI:
         if not auth.ok:
             return unauthorized(origin_of(request))
         body = await read_json(request)
+        started = time.monotonic()
+        query = str(body.get("query") or "")
         try:
-            return json_response(
-                await tp(
-                    recall_memories,
-                    {
-                        "query": str(body.get("query") or ""),
-                        "mode": body.get("mode"),
-                        "kind": body.get("kind"),
-                        "workspace": body.get("workspace"),
-                        "project": body.get("project"),
-                        "createdBy": body.get("createdBy"),
-                        "tag": body.get("tag"),
-                        "limit": body.get("limit"),
-                        "source": "web",
-                    },
-                )
+            result = await tp(
+                recall_memories,
+                {
+                    "query": query,
+                    "mode": body.get("mode"),
+                    "kind": body.get("kind"),
+                    "workspace": body.get("workspace"),
+                    "project": body.get("project"),
+                    "createdBy": body.get("createdBy"),
+                    "tag": body.get("tag"),
+                    "limit": body.get("limit"),
+                    "source": "web",
+                },
             )
         except Exception as error:
+            # The failed search is traced too — a search that could not run is
+            # exactly what someone is looking for when they open the log.
+            _trace_read(query, body.get("tag"), 0, started, auth.method, error=str(error))
             return json_response({"error": "semantic_unavailable", "message": str(error) or "embedding failed"}, 503)
+        _trace_read(query, body.get("tag"), len(result["memories"]), started, auth.method, mode=result["effectiveMode"])
+        return json_response(result)
 
     # ── settings: OWNER SESSION ONLY ───────────────────────────────────────
 
@@ -729,6 +753,92 @@ def create_app() -> FastAPI:
         pruned = await tp(prune_search_log, int(days))
         return json_response({"deleted": pruned["removed"], "cutoff": pruned["cutoff"]})
 
+    # ── the trace log and the timeline ─────────────────────────────────────
+    #
+    # None of these routes is itself traced. An observation must not observe
+    # itself: the panel below polls, and a log that grows from being read would
+    # bury the rows anyone actually wants.
+
+    @app.get("/api/cloud")
+    async def cloud(request: Request):
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        q = request.query_params
+        return json_response(await tp(tag_cloud, _int(q.get("limit")) or 50, q.get("workspace")))
+
+    @app.get("/api/traces/cloud")
+    async def asked(request: Request):
+        """What has been asked for, sized by how often — the trace log's own cloud."""
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        q = request.query_params
+        return json_response(await tp(asked_cloud, _int(q.get("limit")) or 50, _int(q.get("days"))))
+
+    @app.get("/api/timeline")
+    async def timeline_route(request: Request):
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        return json_response(await tp(timeline, _int(request.query_params.get("days")) or 30))
+
+    @app.get("/api/traces")
+    async def traces_list(request: Request):
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        q = request.query_params
+        entries = await tp(
+            list_traces,
+            limit=_int(q.get("limit")) or 50,
+            query=q.get("q"),
+            kind=q.get("kind"),
+            tool=q.get("tool"),
+            outcome=q.get("outcome"),
+            surface=q.get("surface"),
+            subject=q.get("subject"),
+            since=q.get("since"),
+        )
+        return json_response({"entries": entries, "stats": await tp(trace_stats)})
+
+    @app.get("/api/traces/subject")
+    async def trace_subject_route(request: Request):
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        subject = request.query_params.get("keyword") or request.query_params.get("subject") or ""
+        if not subject.strip():
+            return json_response({"error": "invalid", "message": "A keyword is required."}, 400)
+        return json_response(await tp(subject_report, subject))
+
+    @app.delete("/api/traces")
+    async def traces_bulk(request: Request):
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        q = request.query_params
+        keyword = q.get("keyword")
+        days = q.get("olderThanDays")
+        everything = q.get("all") == "true"
+        # Exactly one mode, for the same reason forget_search_log demands it: an
+        # ambiguous request must not delete more than the caller pictured.
+        chosen = [m for m in (keyword, days, "all" if everything else None) if m is not None]
+        if len(chosen) != 1:
+            return json_response({"error": "invalid", "message": "Give exactly one of keyword, olderThanDays, or all=true."}, 400)
+        if keyword is not None:
+            try:
+                return json_response({"keyword": keyword, "deleted": await tp(forget_keyword, keyword)})
+            except ValueError as error:
+                return json_response({"error": "invalid", "message": str(error)}, 400)
+        if everything:
+            return json_response({"deleted": await tp(clear_traces)})
+        pruned = await tp(prune_traces, int(days))
+        return json_response({"deleted": pruned["removed"], "cutoff": pruned["cutoff"]})
+
+    # Superseded by /api/traces, which is durable and searchable. Kept because it
+    # is the one view that shows the RAW headers of a request, which is what a
+    # silent connector failure is diagnosed from.
     @app.get("/api/debug/mcp-log")
     async def debug_mcp_log(request: Request):
         auth = await gate(request)
@@ -814,6 +924,33 @@ def create_app() -> FastAPI:
         return HTMLResponse(stamped, headers={"cache-control": "no-store, must-revalidate"})
 
     return app
+
+
+def _trace_read(query, tag, hits: int, started: float, method: str | None, mode: str = "", error: str = "") -> None:
+    """
+    One read, filed — if it carried an intent.
+
+    Both HTTP read paths call this rather than writing their own record, for the
+    same reason the MCP dispatcher is traced around rather than inside each tool:
+    a log wired up at call sites is one forgotten call away from answering "what
+    did I ask for" with a confident, partial lie.
+    """
+    subject = (query or "").strip() or (tag or "")
+    if not subject:
+        return
+    record_trace(
+        kind="read",
+        surface="web",
+        tool="search" if query else "tag",
+        subject=subject,
+        subject_kind="keyword" if query else "term",
+        outcome="error" if error else ("empty" if not hits else "ok"),
+        hits=hits,
+        duration_ms=(time.monotonic() - started) * 1000,
+        mode=mode,
+        who=method or "",
+        error=error,
+    )
 
 
 def _int(value) -> int | None:

@@ -22,9 +22,9 @@ import { useEffect, useState } from "react";
  * link — is not a cost for an app that is a single bundle behind a passphrase.
  */
 
-export type View = "memory" | "atlas" | "workspaces" | "settings" | "tools" | "log";
+export type View = "memory" | "atlas" | "workspaces" | "settings" | "tools" | "log" | "traces";
 
-const VIEWS: View[] = ["memory", "atlas", "workspaces", "settings", "tools", "log"];
+const VIEWS: View[] = ["memory", "atlas", "workspaces", "settings", "tools", "log", "traces"];
 
 /**
  * Renamed destinations, old name → new.

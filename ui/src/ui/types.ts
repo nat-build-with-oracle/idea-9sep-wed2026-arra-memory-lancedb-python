@@ -62,7 +62,13 @@ export interface Facets {
   unassigned: number;
   projects: ProjectFacet[];
   agents: AgentFacet[];
-  tags: Array<{ tag: string; count: number }>;
+  /**
+   * Tags carry the cloud size the server computed for them — the sizing law
+   * lives in arra_memory/cloud.py and is never re-derived here, so this page and
+   * the MCP tool cannot disagree about how big a tag is. Optional because an
+   * older server would not send it, and the row then renders as a plain menu.
+   */
+  tags: Array<{ tag: string; count: number; size?: number }>;
   total: number;
 }
 
@@ -185,4 +191,100 @@ export interface SettingsInfo {
   ignored?: string[];
   ignoredReason?: string;
   restartRequired?: boolean;
+}
+
+
+/**
+ * The tag cloud, as the SERVER computes it.
+ *
+ * `size` arrives already resolved rather than being derived here, so the MCP
+ * tool and this page cannot disagree about how big a tag is — the law lives in
+ * arra_memory/cloud.py and nowhere else.
+ */
+export interface CloudItem {
+  tag: string;
+  count: number;
+  /** 0..1 on a log scale. Present so a different renderer need not re-derive it. */
+  weight: number;
+  /** Font size in px, already on the 11–20 scale. */
+  size: number;
+}
+
+/** The same shape keyed by `subject` — what has been ASKED for, not what is stored. */
+export interface AskedItem {
+  subject: string;
+  count: number;
+  weight: number;
+  size: number;
+}
+
+export interface AskedCloud {
+  items: AskedItem[];
+  max: number;
+  total: number;
+  distinct: number;
+  uniform: boolean;
+  scale: { min: number; max: number; law: string };
+  days: number;
+}
+
+export interface Cloud {
+  items: CloudItem[];
+  max: number;
+  total: number;
+  distinct: number;
+  /**
+   * Every tag used equally often. Stated rather than implied: a cloud drawing
+   * every tag the same size should be able to say why.
+   */
+  uniform: boolean;
+  scale: { min: number; max: number; law: string };
+  workspace: string;
+}
+
+/** One row of the station log — a tool call, or a read that carried an intent. */
+export interface TraceEntry {
+  id: string;
+  /** Monotonic tiebreaker for rows written in the same millisecond. */
+  seq: number;
+  at: string;
+  day: string;
+  kind: string;
+  tool: string;
+  subject: string;
+  subjectKind: string;
+  surface: string;
+  /** `empty` is the interesting one — a search that found nothing. */
+  outcome: string;
+  hits: number;
+  durationMs: number;
+  mode: string;
+  who: string;
+  input: string;
+  result: string;
+  error: string;
+}
+
+export interface TraceStats {
+  enabled: boolean;
+  total: number;
+  oldest: string | null;
+  newest: string | null;
+  byKind: Record<string, number>;
+  bySurface: Record<string, number>;
+}
+
+/** What was written and what was asked, per day. Quiet days are present. */
+export interface TimelineDay {
+  day: string;
+  written: number;
+  traced: number;
+  kinds: Record<string, number>;
+}
+
+export interface Timeline {
+  from: string;
+  to: string;
+  days: TimelineDay[];
+  totals: { written: number; traced: number; busiest: string | null };
 }

@@ -1,5 +1,10 @@
 import type {
   AgentFacet,
+  AskedCloud,
+  Cloud,
+  Timeline,
+  TraceEntry,
+  TraceStats,
   SettingsInfo,
   EmbeddingCoverage,
   Facets,
@@ -139,6 +144,35 @@ export const api = {
 
   /** Every chip row, in one request. */
   facets: () => call<Facets>("/api/facets"),
+
+  /** The tags, sized by usage. The sizing law lives on the server. */
+  cloud: (workspace?: string) =>
+    call<Cloud>(`/api/cloud${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""}`),
+
+  /** What was written and what was asked, per day. */
+  timeline: (days = 30) => call<Timeline>(`/api/timeline?days=${days}`),
+
+  /**
+   * The station log. None of these calls is itself traced — an observation must
+   * not observe itself, and this panel polls.
+   */
+  traces: {
+    /** What has been asked for, sized by how often. Untraced, like every trace read. */
+    cloud: (days?: number) => call<AskedCloud>(`/api/traces/cloud${days ? `?days=${days}` : ""}`),
+    list: (params: { limit?: number; q?: string; kind?: string; tool?: string; outcome?: string; surface?: string } = {}) => {
+      const s = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) if (v) s.set(k, String(v));
+      const qs = s.toString();
+      return call<{ entries: TraceEntry[]; stats: TraceStats }>(`/api/traces${qs ? `?${qs}` : ""}`);
+    },
+    forget: (keyword: string) =>
+      call<{ keyword: string; deleted: number }>(`/api/traces?keyword=${encodeURIComponent(keyword)}`, {
+        method: "DELETE",
+      }),
+    prune: (olderThanDays: number) =>
+      call<{ deleted: number; cutoff: string }>(`/api/traces?olderThanDays=${olderThanDays}`, { method: "DELETE" }),
+    clear: () => call<{ deleted: number }>("/api/traces?all=true", { method: "DELETE" }),
+  },
 
   /** Rename one facet value to another, everywhere. */
   merge: (facet: string, from: string, to: string) =>
