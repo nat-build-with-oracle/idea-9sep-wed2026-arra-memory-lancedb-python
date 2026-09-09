@@ -31,6 +31,7 @@ TWO RULES THAT LOOK LIKE DETAILS AND ARE NOT:
 from __future__ import annotations
 
 import json
+import re
 import threading
 import unicodedata
 import uuid
@@ -160,6 +161,12 @@ def record_trace(
 # ── reading ───────────────────────────────────────────────────────────────────
 
 
+def _looks_like_id(value: str) -> bool:
+    """A memory id is a subject too, and lowercasing a uuid would still match —
+    but stripping a trailing `*` from one would not. Left exactly as written."""
+    return bool(re.fullmatch(r"[0-9a-fA-F-]{8,36}", (value or "").strip()))
+
+
 def _to_entry(row: dict) -> dict:
     return {
         "id": row["id"],
@@ -202,7 +209,7 @@ def list_traces(
         Q.eq("tool", tool) if tool else None,
         Q.eq("outcome", outcome) if outcome else None,
         Q.eq("surface", surface) if surface else None,
-        Q.eq("subject", normalize_keyword(subject)) if subject else None,
+        Q.eq("subject", subject if _looks_like_id(subject) else normalize_keyword(subject)) if subject else None,
         f"at >= {Q.lit(since)}" if since else None,
     )
     rows = db().traces.rows(where or None)

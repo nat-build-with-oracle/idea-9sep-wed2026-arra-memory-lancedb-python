@@ -16,6 +16,8 @@ from .digest import build_digest, digest_windows
 from .fleet import fleet_status, list_fleet, member_replies, send_to_member
 from .memory import (
     create_memory,
+    memory_history,
+    retag_memory,
     delete_memory,
     get_memory,
     get_memory_stats,
@@ -63,7 +65,19 @@ def negotiate_protocol(requested) -> str:
 # untraced, `trace_search` would find its own previous call every time, and the
 # log would grow from being read.
 UNTRACED_TOOLS = frozenset(
-    {"trace_search", "trace_subject", "forget_trace_keyword", "list_search_log", "list_tools", "timeline"}
+    {
+        "trace_search",
+        "trace_subject",
+        "forget_trace_keyword",
+        "list_search_log",
+        "list_tools",
+        "timeline",
+        # Not because it is unimportant — because it files its OWN row, carrying
+        # the before and after sets. Letting the generic tracer log it too put
+        # every tag edit in a memory's history twice, the second time with no
+        # `after` to show.
+        "retag_memory",
+    }
 )
 
 
@@ -223,6 +237,36 @@ BASE_TOOLS: list[dict] = [
                 "tag": {"type": "string"},
                 "limit": _LIMIT_50,
             },
+        },
+    },
+    {
+        "name": "retag_memory",
+        "description": (
+            "Add and remove tags on one memory without resending the others. Use this to curate — `PATCH`-style "
+            "replacement means a client that read the memory a moment ago silently reverts a tag added since. "
+            "Removals apply before additions, so renaming a tag is one call. Every change is filed in that "
+            "memory's own history, readable with memory_history."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "add": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                "remove": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+            },
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "memory_history",
+        "description": (
+            "What has happened to one memory — every tag change, with what was added, what was removed, and the "
+            "resulting set, newest first. The answer to “why is this tagged that?”, with a timestamp on it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200}},
+            "required": ["id"],
         },
     },
     {
@@ -633,6 +677,7 @@ def _recall(args: dict) -> dict:
             "mode": args.get("mode"),
             **_scope_from(args),
             "tag": args.get("tag"),
+            "match": args.get("match"),
             "limit": args.get("limit") or 10,
             "source": "mcp",
         }
@@ -703,6 +748,32 @@ def call_tool(name: str, args: dict) -> dict:
 
     if name == "recall_memories":
         return _recall(args)
+
+    if name == "retag_memory":
+        try:
+            memory = retag_memory(str(args.get("id") or ""), args.get("add"), args.get("remove"), "mcp")
+        except (ValueError, TypeError, AttributeError) as error:
+            return _tool_error(str(error) or "invalid")
+        if not memory:
+            return _tool_error(f"Memory {args.get('id')} was not found.")
+        return {**_text(f"Tagged.\n\n{render(memory)}"), "structuredContent": {"memory": memory}}
+
+    if name == "memory_history":
+        entries = memory_history(str(args.get("id") or ""), args.get("limit") or 100)
+        if not entries:
+            return {**_text(f"Nothing has been recorded against {args.get('id')}."), "structuredContent": {"entries": []}}
+        lines = []
+        for e in entries:
+            try:
+                changed = json.loads(e["input"] or "{}")
+                after = json.loads(e["result"] or "{}").get("after", [])
+            except ValueError:
+                changed, after = {}, []
+            moved = " ".join(
+                [*(f"+{t}" for t in changed.get("add") or []), *(f"-{t}" for t in changed.get("remove") or [])]
+            )
+            lines.append(f"{e['at']}  {e['tool']}  {moved or '(no tag change)'}  → {after}")
+        return {**_text("\n".join(lines)), "structuredContent": {"entries": entries}}
 
     if name == "read_memory":
         memory = get_memory(str(args.get("id") or ""))
