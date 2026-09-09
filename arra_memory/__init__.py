@@ -9,6 +9,6 @@ except PackageNotFoundError:  # running from a checkout that was never installed
     # number /api/health reports, which is what anyone checks to confirm what a
     # machine is actually running — so a stale value here does not look like a
     # forgotten constant, it looks like a deploy that did not happen.
-    VERSION = "0.2.0"
+    VERSION = "0.2.1"
 
 __version__ = VERSION
