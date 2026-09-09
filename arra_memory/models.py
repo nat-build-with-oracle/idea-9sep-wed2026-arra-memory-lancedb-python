@@ -121,6 +121,40 @@ class SearchLogRow(LanceModel):
     created_at: str
 
 
+class TraceRow(LanceModel):
+    """
+    The station log: one row shape for MCP calls and for traced reads.
+
+    `kind` is what makes one table answer both questions — the two source
+    projects carried a `traces` table AND an `mcp_calls` table, which doubled the
+    write path and made "search the log" two searches.
+
+    `seq` is a synthetic monotonic counter, not decoration: both of those
+    projects relied on SQLite's rowid to break ties inside one millisecond and
+    both had a real ordering bug before they did. LanceDB has no rowid.
+    """
+
+    id: str
+    seq: int = 0
+    at: str
+    day: str = ""
+    kind: str = "mcp"
+    tool: str = ""
+    subject: str = ""
+    subject_kind: str = ""
+    surface: str = ""
+    outcome: str = "ok"
+    hits: int = 0
+    duration_ms: int = 0
+    mode: str = ""
+    who: str = ""
+    input: str = ""
+    result: str = ""
+    error: str = ""
+    # What a text search over the log reads.
+    text: str = ""
+
+
 MEMORY_COLUMNS: tuple[str, ...] = (
     "id",
     "title",

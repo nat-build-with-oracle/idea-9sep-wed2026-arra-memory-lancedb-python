@@ -28,6 +28,7 @@ SETTING_KEYS: tuple[str, ...] = (
     "embedding_model",
     "embedding_dimensions",
     "search_log",
+    "trace_log",
     "generated_tools",
     "language",
     "theme",

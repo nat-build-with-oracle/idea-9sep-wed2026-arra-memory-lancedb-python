@@ -31,6 +31,7 @@ from .models import (
     OAuthTokenRow,
     SearchLogRow,
     Table,
+    TraceRow,
     memory_model,
 )
 
@@ -67,6 +68,7 @@ class Database:
         self.oauth_codes: Table[OAuthCodeRow] = Table(self.conn, "oauth_codes", OAuthCodeRow, "code")
         self.oauth_tokens: Table[OAuthTokenRow] = Table(self.conn, "oauth_tokens", OAuthTokenRow, "token")
         self.search_log: Table[SearchLogRow] = Table(self.conn, "search_log", SearchLogRow, "id")
+        self.traces: Table[TraceRow] = Table(self.conn, "traces", TraceRow, "id")
         self.vector_dimensions: int | None = None
         self.schema_error: str | None = None
         self._optimize_timer: threading.Timer | None = None
@@ -83,6 +85,7 @@ class Database:
             self.oauth_codes,
             self.oauth_tokens,
             self.search_log,
+            self.traces,
         ):
             table.raw  # opens or creates
         self._check_vector_width()
@@ -166,7 +169,7 @@ class Database:
         with self._optimize_lock:
             self._optimize_timer = None
             self._optimize_deadline = None
-        for table in (self.memories, self.search_log, self.kv, self.oauth_tokens, self.oauth_codes):
+        for table in (self.memories, self.search_log, self.traces, self.kv, self.oauth_tokens, self.oauth_codes):
             table.optimize()
 
     def close(self) -> None:
