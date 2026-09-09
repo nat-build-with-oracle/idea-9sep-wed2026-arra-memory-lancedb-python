@@ -4,6 +4,7 @@ import { MemoryCard, useSlashFocus } from "./components";
 import { Chips, kindColor } from "./Chips";
 import { Atlas } from "./Atlas";
 import { SearchLog } from "./SearchLog";
+import { Traces } from "./Traces";
 import { Tools } from "./Tools";
 import { Workspaces } from "./Workspaces";
 import { NavBar, Panel } from "./Menu";
@@ -214,6 +215,17 @@ export default function App() {
               onSelect: () => setView("log"),
             }]
           : []),
+        // Always offered, unlike the search log: the trace log records what
+        // ARRIVED rather than what was looked for, so it has something to show
+        // on any instance that has ever been called — including one where
+        // recording is off, where the page says so rather than being absent.
+        {
+          label: t("nav.traces"),
+          title: t("nav.traces.title"),
+          weight: 40,
+          active: view === "traces",
+          onSelect: () => setView("traces"),
+        },
         // Configuration lives at the end, where configuration belongs — you
         // pass the things you use daily to reach the thing you set once.
         {
@@ -277,6 +289,8 @@ export default function App() {
       />
     ) : view === "settings" || view === "tools" ? (
       <Tools onClose={() => setView("memory")} nav={nav} />
+    ) : view === "traces" ? (
+      <Traces onClose={() => setView("memory")} nav={nav} />
     ) : view === "log" ? (
       <SearchLog
         onClose={() => setView("memory")}

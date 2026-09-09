@@ -536,9 +536,25 @@ def list_facets() -> dict:
             {"project": p, "count": n, "latest": latest} for p, n, latest in _grouped(rows, "project")[:50]
         ],
         "agents": [{"agent": a, "count": n, "latest": latest} for a, n, latest in _grouped(rows, "created_by")[:50]],
-        "tags": [{"tag": t, "count": n} for t, n in sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))[:50]],
+        # Tags carry their cloud size, so the filter bar can draw a real cloud
+        # from the ONE request it already makes. Computed here rather than in the
+        # browser because arra_memory/cloud.py is the only place the sizing law
+        # is allowed to live — the MCP tool and this page must not be able to
+        # disagree about how big a tag is.
+        "tags": _sized_tags(sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))[:50]),
         "total": len(rows),
     }
+
+
+def _sized_tags(pairs: list[tuple[str, int]]) -> list[dict]:
+    from .cloud import MIN_PX, size_for
+
+    largest = max((n for _, n in pairs), default=0)
+    uniform = largest > 0 and all(n == largest for _, n in pairs)
+    return [
+        {"tag": tag, "count": n, "size": MIN_PX if uniform else size_for(n, largest)}
+        for tag, n in pairs
+    ]
 
 
 def list_kinds() -> list[dict]:
