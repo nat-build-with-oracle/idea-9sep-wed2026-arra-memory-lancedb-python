@@ -33,6 +33,7 @@ that structural instead of disciplinary.
 - [x] Port graph, digest, search log, tool toggles, and the MQTT fleet layer
 - [x] Tests, including a real mosquitto broker and the bugs the original paid for
 - [x] Prove it live: real Ollama `bge-m3`, a real browser, a real OAuth+MCP client
+- [x] Adversarially review the port against the original, and fix what survived refutation
 
 ## Done when
 
@@ -51,6 +52,29 @@ that structural instead of disciplinary.
   three.js atlas (7 nodes, k=3, 61% variance explained, a written `[[link]]` drawn as its own edge),
   the search log distinguishing `web` from `mcp` calls, and the settings page.
 - The full suite passes, including the fleet tests against a real broker.
+
+## What the review found
+
+Six reviewers read the port against the TypeScript; each finding then went to three agents told to
+refute it. Twenty-three were raised, ten were refuted and dropped, thirteen were fixed. Two mattered
+more than the rest, and both were invisible to a passing test suite:
+
+**Keyword search returned memories that do not contain the query.** LanceDB's n-gram tokenizer
+splits document and query into 3-character sequences, and once rows are folded into the index —
+automatically, seconds after any write — `PhraseQuery` stops requiring those sequences to be
+adjacent. "kubernetes" matched "remember the november deadline" on `ber`, "the internet connection
+dropped" on `net`, "tests are green today" on `tes`. Every test passed because no test had ever
+called `optimize()`, so the suite only exercised the exact, unindexed path. The index is now a
+candidate generator and the substring test the original ran in SQL decides what matches.
+
+**Two overlapping settings writes corrupted `settings.json`.** An unsynchronised read-modify-write
+on a threadpool, reachable from one browser tab because Regenerate does not disable Save. Of 200
+such pairs: 152 silently discarded the API token already shown to the owner, 24 left the file
+invalid — which `reload()` swallows into an empty dict, losing `owner_passphrase`, after which the
+server refuses to start.
+
+The lesson generalises past this repo: **a test suite that never triggers the background maintenance
+its storage engine performs is testing a different system than the one that runs.**
 
 ## Notes
 
