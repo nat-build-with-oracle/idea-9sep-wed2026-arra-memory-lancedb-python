@@ -70,6 +70,33 @@ size_for(0, 20)    # 11.0  ← min-max จะ ValueError ตรงนี้
 size_for(5, 0)     # 11.0  ← ทั้ง corpus ยังไม่มี tag
 ```
 
+## 🏷️ ดูแล tag (เพิ่ม/ลบ) + ประวัติราย node
+
+```bash
+# เปลี่ยนชื่อ tag ในครั้งเดียว — remove ทำก่อน add เสมอ
+curl -sS -X POST http://127.0.0.1:8099/api/memories/$ID/tags -b cookie.txt \
+  -H 'content-type: application/json' \
+  -d '{"add":["lancedb"],"remove":["turso"]}'
+
+# ประวัติของ memory นั้นอย่างเดียว — ใครแก้ tag อะไร เมื่อไหร่ ได้อะไรออกมา
+curl -sS http://127.0.0.1:8099/api/memories/$ID/history -b cookie.txt | python3 -m json.tool
+```
+
+MCP: `retag_memory {id, add[], remove[]}` · `memory_history {id}`
+
+## 🔎 4 แบบของการค้น
+
+```bash
+curl -sS '.../api/memories?q=runbook' -b cookie.txt                          # keyword
+curl -sS '.../api/memories?tag=lancedb' -b cookie.txt                        # tag เดียว
+curl -sS '.../api/memories?tag=lancedb&tag=oauth' -b cookie.txt              # หลาย tag — any (OR)
+curl -sS '.../api/memories?tag=lancedb&tag=oauth&match=all' -b cookie.txt    # หลาย tag — all (AND)
+curl -sS '.../api/memories?q=runbook&tag=lancedb' -b cookie.txt              # keyword + tag
+```
+
+`match` ที่ใช้จริงถูก echo กลับมาในทุก response — ไม่ต้องเดาว่ากฎไหนทำงาน
+`match=all` คือตัวที่ทำให้ tag คุ้มที่จะขยาย: ได้ผลว่างแปลว่ายังไม่มีอะไรถือทั้งสอง tag
+
 ## 📋 trace log + timeline
 
 ```bash

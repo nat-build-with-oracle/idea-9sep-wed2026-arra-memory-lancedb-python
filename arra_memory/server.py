@@ -26,6 +26,9 @@ from .graph import build_graph
 from .mcp import handle_mcp, tool_catalog
 from .memory import (
     FACETS,
+    memory_history,
+    normalize_match,
+    retag_memory,
     backfill_embeddings,
     create_memory,
     delete_memory,
@@ -398,6 +401,7 @@ def create_app() -> FastAPI:
                 "createdBy": q.getlist("createdBy"),
                 # getlist, like every sibling facet — see _tag_set in memory.py.
                 "tag": q.getlist("tag"),
+                "match": q.get("match"),
                 "limit": _int(q.get("limit")),
                 "source": "web",
             },
@@ -407,7 +411,12 @@ def create_app() -> FastAPI:
         # would bury the handful of rows worth reading under a wall of
         # "(no query) → 7 results".
         _trace_read(q.get("q"), ", ".join(q.getlist("tag")), len(memories), started, auth.method)
-        return json_response({"memories": memories, "count": len(memories)})
+        # The effective match is echoed ALWAYS, not only when tags were passed: a
+        # caller that cannot see which rule ran cannot tell an empty result from
+        # a wrong one.
+        return json_response(
+            {"memories": memories, "count": len(memories), "match": normalize_match(q.get("match"))}
+        )
 
     @app.get("/api/digest")
     async def digest(request: Request):
@@ -549,6 +558,27 @@ def create_app() -> FastAPI:
         except BAD_INPUT as error:
             return json_response({"error": "invalid", "message": str(error) or "invalid"}, 400)
         return json_response({"memory": memory}) if memory else json_response({"error": "not_found"}, 404)
+
+    @app.post("/api/memories/{memory_id}/tags")
+    async def memory_retag(request: Request, memory_id: str):
+        """Add and remove tags in one operation, and file what changed."""
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        body = await read_json(request)
+        try:
+            memory = await tp(retag_memory, memory_id, body.get("add"), body.get("remove"), "web")
+        except BAD_INPUT as error:
+            return json_response({"error": "invalid", "message": str(error) or "invalid"}, 400)
+        return json_response({"memory": memory}) if memory else json_response({"error": "not_found"}, 404)
+
+    @app.get("/api/memories/{memory_id}/history")
+    async def memory_history_route(request: Request, memory_id: str):
+        """One memory's own history. Untraced, like every read of the log."""
+        auth = await gate(request)
+        if not auth.ok:
+            return unauthorized(origin_of(request))
+        return json_response({"id": memory_id, "entries": await tp(memory_history, memory_id)})
 
     @app.delete("/api/memories/{memory_id}")
     async def memory_delete(request: Request, memory_id: str):

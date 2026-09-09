@@ -118,6 +118,18 @@ def scope_label(value) -> str:
     return ", ".join(v for v in values if v)
 
 
+def normalize_match(value) -> str:
+    """
+    How several tags combine: `any` (OR, the default) or `all` (AND).
+
+    `all` is the one that makes tags worth expanding — "everything tagged both
+    lancedb and oauth" is how you find the memory you half-remember, and an empty
+    answer to it is the signal that nothing carries both yet. Anything
+    unrecognised is `any`, because a typo'd match must not silently narrow.
+    """
+    return "all" if str(value or "").strip().lower() == "all" else "any"
+
+
 def _tag_set(value) -> list[str]:
     """Tags as a lowercased set. A bare string is one tag and stays the shape
     every MCP tool passes; a list is "any of these"."""
@@ -213,6 +225,84 @@ def update_memory(memory_id: str, input: dict) -> dict | None:
     if memory["title"] != existing["title"] or memory["content"] != existing["content"]:
         index_memory_async(memory)
     return memory
+
+
+def retag_memory(memory_id: str, add=None, remove=None, source: str = "web") -> dict | None:
+    """
+    Add and remove tags on one memory, in one operation, and file what changed.
+
+    Not a replace. `PATCH` with the whole list is the wrong shape for curation:
+    dropping one stale tag means sending all the others back, so a client that
+    read the memory a moment ago silently reverts a tag someone added since.
+    Here the caller names only the change it wants.
+
+    Removals apply BEFORE additions, so renaming a tag is one call and cannot
+    lose the new value to its own removal. Removing a tag that is not there is
+    not an error — the caller asked for a state and that state is the result.
+
+    The history is written here rather than at the call sites, for the same
+    reason indexing is: the REST route and the MCP tool must not be able to
+    disagree about whether a change was recorded.
+    """
+    existing = get_memory(memory_id)
+    if existing is None:
+        return None
+
+    dropping = {t.lower() for t in _tag_set(remove)}
+    kept = [t for t in existing["tags"] if t.lower() not in dropping]
+    # normalize_tags does the deduping, casing and the ten-tag cap, so an add
+    # cannot smuggle a duplicate or an eleventh tag past the write path's rules.
+    resulting = normalize_tags(kept + [str(t) for t in (add if isinstance(add, list) else ([] if add is None else [add]))])
+
+    removed = [t for t in existing["tags"] if t not in resulting]
+    added = [t for t in resulting if t not in existing["tags"]]
+    if not removed and not added:
+        return existing
+
+    memory = {**existing, "tags": resulting, "updatedAt": now_iso()}
+    database = db()
+    database.memories.update(
+        Q.eq("id", existing["id"]),
+        {"tags": _dump_tags(resulting), "text": fts_text(memory["title"], memory["content"], resulting), "updated_at": memory["updatedAt"]},
+    )
+    database.schedule_optimize()
+    _record_retag(memory, before=existing["tags"], added=added, removed=removed, source=source)
+    return memory
+
+
+def _record_retag(memory: dict, before: list[str], added: list[str], removed: list[str], source: str) -> None:
+    """
+    One node's history entry.
+
+    Guarded here as well as inside record_trace, and that is not belt-and-braces:
+    the tag edit is already durable by the time this runs, so nothing this
+    function can do is worth losing it for. Relying on the writer's own
+    try/except made the guarantee depend on another module's internals — and on
+    the import at the top of this function succeeding at all.
+    """
+    try:
+        from .trace import record_trace
+
+        record_trace(
+            kind="tag",
+            surface=source,
+            tool="retag",
+            subject=memory["id"],
+            subject_kind="item",
+            hits=len(memory["tags"]),
+            who=source,
+            input={"add": added, "remove": removed},
+            result={"before": before, "after": memory["tags"], "title": memory["title"]},
+        )
+    except Exception:
+        pass
+
+
+def memory_history(memory_id: str, limit: int = 100) -> list[dict]:
+    """Everything the log knows about one memory, newest first."""
+    from .trace import list_traces
+
+    return list_traces(limit=limit, subject=memory_id)
 
 
 def delete_memory(memory_id: str) -> bool:
@@ -337,6 +427,7 @@ def search_memories_nolog(input: dict | None = None) -> list[dict]:
     # arrived last — inherited from the original, and much easier to hit now that
     # the tag row is a cloud people click.
     tags = _tag_set(input.get("tag"))
+    match = normalize_match(input.get("match"))
     table = db().memories
 
     # An id, or the front of one, is answered directly — and deliberately NOT
@@ -385,7 +476,8 @@ def search_memories_nolog(input: dict | None = None) -> list[dict]:
         if tags:
             # Quoted so "ha" cannot match "haos" — the tags column is a JSON array.
             stored = (r["tags"] or "").lower()
-            if not any(f'"{t}"' in stored for t in tags):
+            hit = all if match == "all" else any
+            if not hit(f'"{t}"' in stored for t in tags):
                 return False
         return True
 
@@ -750,8 +842,16 @@ def recall_memories(input: dict) -> dict:
     common = {**_scope_of(input), "limit": input.get("limit")}
 
     if requested == "keyword" or not query.strip():
-        memories = search_memories({"query": query, **common, "tag": input.get("tag"), "source": source})
-        return {"requestedMode": requested, "effectiveMode": "keyword", "fallback": None, "memories": memories}
+        memories = search_memories(
+            {"query": query, **common, "tag": input.get("tag"), "match": input.get("match"), "source": source}
+        )
+        return {
+            "requestedMode": requested,
+            "effectiveMode": "keyword",
+            "fallback": None,
+            "memories": memories,
+            "match": normalize_match(input.get("match")),
+        }
 
     started = time.monotonic()
     try:
