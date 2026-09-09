@@ -1,0 +1,17 @@
+# Debian, not Alpine, and that is forced rather than preferred.
+#
+# lancedb publishes manylinux wheels only — there is no musl build — so on the
+# Alpine base pip falls through to a source build of a large Rust project and
+# fails. pyarrow is the same story. Verified against PyPI: the 0.38.0 files are
+# macosx_11_0_arm64, manylinux_2_28_aarch64, manylinux_2_28_x86_64, win_amd64.
+build_from:
+  amd64: ghcr.io/home-assistant/amd64-base-debian:bookworm
+  aarch64: ghcr.io/home-assistant/aarch64-base-debian:bookworm
+
+# NOTE: no `args:` block, deliberately. BUILD_ARCH, BUILD_FROM and BUILD_VERSION
+# are supplied by the builder itself; setting them here OVERRIDES the real value
+# with the literal string "{arch}".
+
+labels:
+  org.opencontainers.image.source: https://github.com/nat-build-with-oracle/idea-9sep-wed2026-arra-memory-lancedb-python
+  org.opencontainers.image.licenses: MIT

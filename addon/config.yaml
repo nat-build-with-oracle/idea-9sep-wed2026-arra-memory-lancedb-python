@@ -1,0 +1,102 @@
+name: "Arra Memory (LanceDB)"
+version: "0.1.0"
+slug: "arra_memory_lancedb"
+description: >-
+  The same durable memory corpus, on LanceDB instead of libSQL. Sits beside the
+  original rather than replacing it: its own sidebar panel, its own /data, its
+  own port — so both can run on one machine and be compared on the same
+  questions.
+url: "https://github.com/nat-build-with-oracle/idea-9sep-wed2026-arra-memory-lancedb-python"
+
+# Prebuilt per architecture. Without this, Supervisor builds on the HA host —
+# which for this add-on means compiling nothing but downloading ~400MB of
+# pyarrow and lancedb wheels over whatever connection that box has.
+#
+# COMMENTED OUT until the first publish: pointing at a tag that does not exist
+# breaks the INSTALL rather than the update, and a locally-built add-on is the
+# honest state before there is an image to pull.
+# image: "ghcr.io/nat-build-with-oracle/{arch}-addon-arra_memory_lancedb"
+
+# amd64 and aarch64 only, deliberately: lancedb publishes manylinux wheels for
+# exactly these two and nothing for armv7/armhf. Listing an architecture whose
+# wheels do not exist produces an install that fails at pip, minutes in, with a
+# message about a source build — rather than "not supported on this machine".
+arch:
+  - amd64
+  - aarch64
+
+startup: application
+# A host reboot leaves `boot: manual` add-ons stopped, and a stopped add-on
+# reads as a failed install when it is nothing of the kind.
+boot: auto
+# The HA base ships s6-overlay and owns PID 1 via ENTRYPOINT ["/init"].
+init: false
+hassio_api: false
+homeassistant_api: false
+host_network: false
+
+# The sidebar entry. This is the whole point of installing it beside the
+# original: two panels, two engines, one machine.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:database-search
+panel_title: "Memory · Lance"
+panel_admin: false
+
+# A LAN port as well as ingress, because ingress alone cannot serve MCP: it
+# authenticates with Home Assistant's own session and rewrites the path under a
+# per-session token, which an MCP client has no way to hold.
+#
+# 8100, NOT 8099 — the original add-on already publishes 8099 on this host, and
+# two add-ons mapping the same host port means the second one fails to start
+# with a port conflict that reads like a crash.
+ports:
+  8099/tcp: 8100
+ports_description:
+  8099/tcp: "MCP endpoint and API — 8100 on the host, since the libSQL add-on holds 8099"
+
+# /data is the only path Supervisor persists across restarts AND includes in
+# backups. Its own directory, so the two add-ons never share a corpus.
+map:
+  - data:rw
+
+stage: experimental
+
+options:
+  owner_passphrase: ""
+  api_token: ""
+  public_url: ""
+  instance_name: "Arra Memory (LanceDB)"
+  ollama_url: ""
+  embedding_model: "bge-m3"
+  embedding_dimensions: 1024
+  search_log: false
+  trace_log: true
+  generated_tools: false
+  language: "th"
+  theme: "slate"
+  mqtt_url: ""
+  mqtt_username: ""
+  mqtt_password: ""
+  mqtt_prefix: "oracle"
+
+schema:
+  owner_passphrase: password
+  api_token: password
+  # `str` and NOT `url?`: an optional URL key whose shipped default is "" fails
+  # Supervisor's options validation BEFORE the container is created, so the
+  # add-on never starts and its log is EMPTY. Learned on this fleet 2026-08-27.
+  public_url: str
+  instance_name: str
+  ollama_url: str
+  embedding_model: str
+  embedding_dimensions: int
+  search_log: bool
+  trace_log: bool
+  generated_tools: bool
+  language: "list(th|en)?"
+  theme: "list(slate|ember|moss|iris|mono|paper)?"
+  mqtt_url: str
+  mqtt_username: str
+  mqtt_password: password
+  mqtt_prefix: str

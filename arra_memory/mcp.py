@@ -722,12 +722,16 @@ def _recall(args: dict) -> dict:
     if memories:
         body = "\n\n".join(f"{i + 1}. {render(m)}" for i, m in enumerate(memories))
     else:
-        body = f"No memories matched{f' “{args['query']}”' if args.get('query') else ''}{f' in {scope}' if scope else ''}."
+        # Bound outside the f-string. Nesting the same quote inside one is
+        # PEP 701, which is Python 3.12+ — and this runs on a Home Assistant
+        # Debian base that ships 3.11, where it is a SyntaxError at IMPORT time.
+        # pyproject declares >=3.11, so the floor is the contract.
+        query_note = f" “{args['query']}”" if args.get("query") else ""
+        scope_note = f" in {scope}" if scope else ""
+        body = f"No memories matched{query_note}{scope_note}."
         if effective == "keyword" and args.get("query"):
-            body += (
-                f"\n\n(Searched by keyword only{f' — {fallback['reason']}' if fallback else ''}. "
-                "A search by meaning may still find something.)"
-            )
+            why = f" — {fallback['reason']}" if fallback else ""
+            body += f"\n\n(Searched by keyword only{why}. A search by meaning may still find something.)"
     structured = {
         "query": args.get("query") or "",
         "matchMode": effective,
@@ -772,7 +776,9 @@ def call_tool(name: str, args: dict) -> dict:
                 }
             )
             narrowed = _describe_scope(args)
-            empty = f"No memories from {rng.label}{f' matching “{args['query']}”' if args.get('query') else ''}{f' in {narrowed}' if narrowed else ''}."
+            matching = f" matching “{args['query']}”" if args.get("query") else ""
+            within = f" in {narrowed}" if narrowed else ""
+            empty = f"No memories from {rng.label}{matching}{within}."
             return _range_result(memories, args, empty, {"window": rng.label, "from": rng.fromIso, "to": rng.toIso})
 
     if name == "remember":
@@ -980,7 +986,9 @@ def call_tool(name: str, args: dict) -> dict:
         body = (
             "\n\n".join(f"[{r['seq']}] {r['name']}/{r['room']} {r['at']}\n{r['text']}" for r in replies)
             if replies
-            else f"Nothing buffered{f' from {args['name']}' if args.get('name') else ''}. This is a short in-memory ring of live traffic, so an empty result does not prove no reply was sent."
+            else "Nothing buffered"
+            + (f" from {args['name']}" if args.get("name") else "")
+            + ". This is a short in-memory ring of live traffic, so an empty result does not prove no reply was sent."
         )
         return {**_text(body), "structuredContent": {"replies": replies}}
 
