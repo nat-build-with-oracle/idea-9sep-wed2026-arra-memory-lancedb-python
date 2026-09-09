@@ -182,3 +182,41 @@ def test_recall_over_mcp_accepts_a_tag_list_and_a_match(tagged):
     all_hit = call("recall_memories", {"tag": ["lancedb", "oauth"], "match": "all"})
     assert len(any_hit["structuredContent"]["memories"]) == 3
     assert [m["content"] for m in all_hit["structuredContent"]["memories"]] == ["both"]
+
+
+# ── tags must narrow every path, not just the keyword one ─────────────────────
+
+
+def test_tags_narrow_the_semantic_half_too(embedder):
+    """
+    Reported live: with a query typed and two tags ticked, the archive showed the
+    whole corpus. The tag filter lived only in the Python keyword path, so the
+    SEMANTIC half of a hybrid recall matched everything and the fusion kept it —
+    which meant ticking a tag did nothing at all as soon as there was a query.
+    """
+    from arra_memory.memory import recall_memories, wait_for_indexing
+
+    # The embedder is installed BEFORE anything is written: it fixes the vector
+    # width, and a table created at another width disables embeddings entirely.
+    embedder()
+    create_memory({"content": "just lancedb", "tags": ["lancedb"]})
+    create_memory({"content": "just oauth", "tags": ["oauth"]})
+    create_memory({"content": "just fts", "tags": ["fts"]})
+    wait_for_indexing()
+
+    for mode in ("keyword", "semantic", "hybrid"):
+        found = recall_memories({"query": "just", "tag": ["lancedb"], "mode": mode})["memories"]
+        assert found, f"{mode} returned nothing at all"
+        assert all("lancedb" in m["tags"] for m in found), f"{mode} ignored the tag filter"
+
+
+def test_the_tag_filter_reaches_the_database_rather_than_only_python():
+    """Pushed down, so a path that does not run the Python filter still narrows."""
+    from arra_memory.memory import scope_filter
+
+    where = scope_filter({"tag": ["kvm", "haos"], "match": "any"})
+    assert "tags LIKE" in where
+    # Quoted on both sides, so "ha" cannot match "haos".
+    assert '"kvm"' in where and '"haos"' in where
+    assert " OR " in where
+    assert " AND " in scope_filter({"tag": ["kvm", "haos"], "match": "all"})

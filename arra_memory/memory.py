@@ -98,16 +98,27 @@ def _scope_set(value, normalize) -> list[str]:
 
 
 def scope_filter(scope: dict) -> str:
-    """Within a facet OR (any of these); across facets AND."""
+    """
+    Within a facet OR (any of these); across facets AND.
+
+    Tags are included, and that is a fix rather than a detail. They used to be
+    filtered only in Python on the keyword path, so the SEMANTIC half of a hybrid
+    recall never saw them: searching with two tags ticked returned the whole
+    corpus, because the vector half matched everything and the fusion kept it.
+    Filtering where the database can apply it is what makes both halves agree.
+    """
     kinds = _scope_set(scope.get("kind"), normalize_kind)
     workspaces = _scope_set(scope.get("workspace"), normalize_workspace)
     projects = _scope_set(scope.get("project"), normalize_project)
     agents = _scope_set(scope.get("createdBy"), normalize_created_by)
+    tags = _tag_set(scope.get("tag"))
+    combine = Q.and_ if normalize_match(scope.get("match")) == "all" else Q.or_
     return Q.and_(
         Q.in_("kind", kinds) if kinds else None,
         Q.in_("workspace", workspaces) if workspaces else None,
         Q.in_("project", projects) if projects else None,
         Q.in_("created_by", agents) if agents else None,
+        combine(*(Q.has_tag("tags", t) for t in tags)) if tags else None,
     )
 
 
@@ -143,7 +154,8 @@ def _tag_set(value) -> list[str]:
 
 
 def _scope_of(input: dict) -> dict:
-    return {k: input.get(k) for k in ("kind", "workspace", "project", "createdBy")}
+    """The facets a search narrows by — tags included, so every path filters alike."""
+    return {k: input.get(k) for k in ("kind", "workspace", "project", "createdBy", "tag", "match")}
 
 
 # ── sorting helpers ───────────────────────────────────────────────────────────
@@ -842,9 +854,7 @@ def recall_memories(input: dict) -> dict:
     common = {**_scope_of(input), "limit": input.get("limit")}
 
     if requested == "keyword" or not query.strip():
-        memories = search_memories(
-            {"query": query, **common, "tag": input.get("tag"), "match": input.get("match"), "source": source}
-        )
+        memories = search_memories({"query": query, **common, "source": source})
         return {
             "requestedMode": requested,
             "effectiveMode": "keyword",

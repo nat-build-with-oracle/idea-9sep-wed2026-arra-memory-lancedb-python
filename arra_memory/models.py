@@ -54,6 +54,16 @@ class Q:
         return f"starts_with({column}, {Q.lit(prefix)})"
 
     @staticmethod
+    def has_tag(column: str, tag: str) -> str:
+        """
+        A tag inside the JSON array the column holds.
+
+        Quoted on both sides so "ha" cannot match "haos" — the same guard the
+        in-Python filter uses, expressed where the database can apply it.
+        """
+        return f"{column} LIKE {Q.lit('%' + chr(34) + str(tag).lower() + chr(34) + '%')}"
+
+    @staticmethod
     def is_null(column: str) -> str:
         return f"{column} IS NULL"
 
