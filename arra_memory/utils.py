@@ -11,7 +11,7 @@ import re
 import secrets
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 # ── time ──────────────────────────────────────────────────────────────────────
 
@@ -125,17 +125,47 @@ def normalize_workspace(value: str | None) -> str:
 
 
 def normalize_url(value: str | None) -> str:
+    """
+    A reference URL. Only http(s) is accepted — a memory is stored data that a UI
+    renders as a link, and `javascript:` there is a scripting hole.
+
+    The result is normalised the way a browser's URL parser would leave it, because
+    that is what the original stored and what any client comparing two URLs will
+    expect: lowercased scheme and host, a default port dropped, an empty path
+    written as "/", and a space in the path percent-encoded rather than left to sit
+    raw inside an href. Existing escapes survive — "%" is safe, so "%20" is not
+    re-encoded into "%2520".
+    """
     raw = (value or "").strip()
     if not raw:
         return ""
     if len(raw) > 2048:
         raise ValueError("url must be 2048 characters or fewer")
     parts = urlsplit(raw)
-    if not parts.scheme or not parts.netloc:
+    scheme = parts.scheme.lower()
+    if not scheme or not parts.netloc:
         raise ValueError("url must be a valid absolute URL")
-    if parts.scheme not in ("http", "https"):
+    if scheme not in ("http", "https"):
         raise ValueError("url must use http or https")
-    return urlunsplit(parts)
+
+    netloc = parts.netloc
+    try:
+        port = parts.port
+    except ValueError as error:  # a non-numeric port never reaches a browser either
+        raise ValueError("url must be a valid absolute URL") from error
+    host = (parts.hostname or "").lower()
+    if not host:
+        raise ValueError("url must be a valid absolute URL")
+    userinfo = netloc.rsplit("@", 1)[0] + "@" if "@" in netloc else ""
+    netloc = userinfo + host
+    if port is not None and port != (443 if scheme == "https" else 80):
+        netloc += f":{port}"
+
+    _SAFE = "/%:@!$&'()*+,;=~-._"
+    path = quote(parts.path, safe=_SAFE) or "/"
+    query = quote(parts.query, safe=_SAFE + "?")
+    fragment = quote(parts.fragment, safe=_SAFE + "?")
+    return urlunsplit((scheme, netloc, path, query, fragment))
 
 
 def normalize_created_by(value: str | None) -> str:
