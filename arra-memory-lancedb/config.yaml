@@ -12,10 +12,11 @@ url: "https://github.com/nat-build-with-oracle/idea-9sep-wed2026-arra-memory-lan
 # which for this add-on means compiling nothing but downloading ~400MB of
 # pyarrow and lancedb wheels over whatever connection that box has.
 #
-# COMMENTED OUT until the first publish: pointing at a tag that does not exist
-# breaks the INSTALL rather than the update, and a locally-built add-on is the
-# honest state before there is an image to pull.
-# image: "ghcr.io/nat-build-with-oracle/{arch}-addon-arra_memory_lancedb"
+# {arch} is substituted by Supervisor. Published by .github/workflows/builder.yml
+# on every push that touches the add-on or the package. BOTH images must be
+# public and anonymously pullable before this line is trusted — pointing at a
+# tag that does not exist breaks the installed add-on rather than the install.
+image: "ghcr.io/nat-build-with-oracle/{arch}-addon-arra_memory_lancedb"
 
 # amd64 and aarch64 only, deliberately: lancedb publishes manylinux wheels for
 # exactly these two and nothing for armv7/armhf. Listing an architecture whose

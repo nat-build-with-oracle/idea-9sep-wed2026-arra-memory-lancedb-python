@@ -1,0 +1,59 @@
+# Build and publish the add-on image for both architectures.
+#
+# Home Assistant pulls a prebuilt image rather than building on the HA host —
+# without that, Supervisor builds locally on every install: the Debian base plus
+# ~400MB of pyarrow and lancedb wheels over whatever connection that box has. It
+# also reports a FAILED build as a successful update and leaves the old version
+# running, because it reports the request rather than the result.
+name: builder
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "arra-memory-lancedb/**"
+      - "arra_memory/**"
+      - "pyproject.toml"
+      - ".github/workflows/builder.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The UI bundle must be in the image: the server serves it from the
+      # package, and an add-on with no bundle is a working API behind a blank
+      # page. Built here rather than committed-and-trusted, so the image cannot
+      # ship a stale bundle.
+      - uses: oven-sh/setup-bun@v2
+      - run: cd ui && bun install --frozen-lockfile && bun run build
+
+      # Supervisor builds an add-on with the ADD-ON DIRECTORY as the Docker
+      # context, so the package has to be inside it. One script defines that
+      # layout, and the local verification build uses the same output.
+      - run: ./arra-memory-lancedb/package.sh "${{ github.workspace }}/arra-memory-lancedb-build"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: home-assistant/builder@master
+        with:
+          args: |
+            --${{ matrix.arch }} \
+            --target ${{ github.workspace }}/arra-memory-lancedb-build \
+            --image {arch}-addon-arra_memory_lancedb \
+            --docker-hub ghcr.io/${{ github.repository_owner }} \
+            --addon

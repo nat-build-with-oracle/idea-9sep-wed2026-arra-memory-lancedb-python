@@ -1,0 +1,11 @@
+# Home Assistant add-on repository.
+#
+# Present so this repo can be added to a Home Assistant instance directly:
+#   Settings → Add-ons → Add-on Store → ⋮ → Repositories → this URL
+#
+# The instance must be able to CLONE it, so the repository has to be reachable
+# by the Supervisor — a private repo will fail with a clone error rather than an
+# access-denied message.
+name: "Arra Memory (LanceDB)"
+url: "https://github.com/nat-build-with-oracle/idea-9sep-wed2026-arra-memory-lancedb-python"
+maintainer: "Nat Weerawan"
