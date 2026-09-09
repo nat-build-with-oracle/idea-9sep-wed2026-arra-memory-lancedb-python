@@ -1,5 +1,5 @@
 name: "Arra Memory (LanceDB)"
-version: "0.1.0"
+version: "0.2.0"
 slug: "arra_memory_lancedb"
 description: >-
   The same durable memory corpus, on LanceDB instead of libSQL. Sits beside the
