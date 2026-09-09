@@ -74,6 +74,45 @@ def test_a_subject_nobody_has_ever_wanted_is_a_different_answer():
     assert dig("nobody-ever-asked")["verdict"] == "unknown"
 
 
+def test_both_empty_verdicts_survive_embeddings_being_switched_on(embedder):
+    """
+    A vector index always returns its k nearest neighbours, however far away.
+
+    So on an instance with embeddings, every dig used to collect `limit` items
+    at the full semantic tier, `strong` was never empty, and the verdict could
+    only ever be "found" — the two verdicts this module exists to distinguish
+    became unreachable the moment someone configured Ollama.
+
+    The far neighbour is still RETURNED, under `weak`: a low score is a signal,
+    not a failure.
+    """
+    # The stored vector is embedded from "title\n\ncontent", so that exact
+    # string is what has to carry a meaning here.
+    embedder({"postgres": 1, "Unrelated\n\na memory about something else entirely": 2})
+    create_memory({"title": "Unrelated", "content": "a memory about something else entirely"})
+    asked("postgres")
+
+    found = dig("postgres")
+    assert found["verdict"] == "asked-never-answered"
+    assert found["items"] == []
+    far = [i for i in found["weak"] if i["source"] == "meaning"]
+    assert far, "the distant neighbour should be reported as weak, not dropped"
+    assert "far" in far[0]["why"]
+    # The number is a DISTANCE. Calling it a cosine inverts what it means: 0.9
+    # read as a similarity looks like the best hit on the page, not the worst.
+    assert far[0]["why"].startswith("distance ")
+
+
+def test_a_near_neighbour_still_counts_as_an_answer(embedder):
+    """The gate must not cost the dig the thing semantic search is for."""
+    embedder({"postgres": 3, "Production database\n\nthe database we run in production": 3})
+    create_memory({"title": "Production database", "content": "the database we run in production"})
+
+    found = dig("postgres")
+    assert found["verdict"] == "found"
+    assert any(i["source"] == "meaning" for i in found["items"])
+
+
 def test_the_subject_is_normalised_so_one_word_is_one_dig():
     create_memory({"content": "x", "tags": ["kubernetes"]})
     assert dig("  Kubernetes*  ")["subject"] == "kubernetes"

@@ -131,6 +131,23 @@ def _tool_error(message: str) -> dict:
     return {"isError": True, "content": [{"type": "text", "text": message}]}
 
 
+def _as_dict(raw: str | None) -> dict:
+    """
+    A stored JSON field, read back as a dict — or an empty one.
+
+    Trace fields are written through `clip`, which truncates to `…[N chars]`.
+    So a long value does not round-trip: it can fail to parse, and it can parse
+    to a list, a string or a number. Anything that is not a dict is not a
+    partially-usable dict, so it becomes {} rather than an AttributeError two
+    lines later.
+    """
+    try:
+        value = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def render(memory: dict) -> str:
     tags = f" #{' #'.join(memory['tags'])}" if memory["tags"] else ""
     provenance = " · ".join(
@@ -798,20 +815,31 @@ def call_tool(name: str, args: dict) -> dict:
         return {**_text(f"Tagged.\n\n{render(memory)}"), "structuredContent": {"memory": memory}}
 
     if name == "memory_history":
-        entries = memory_history(str(args.get("id") or ""), args.get("limit") or 100)
+        try:
+            entries = memory_history(str(args.get("id") or ""), args.get("limit") or 100)
+        except ValueError as error:
+            return _tool_error(str(error))
         if not entries:
             return {**_text(f"Nothing has been recorded against {args.get('id')}."), "structuredContent": {"entries": []}}
         lines = []
         for e in entries:
-            try:
-                changed = json.loads(e["input"] or "{}")
-                after = json.loads(e["result"] or "{}").get("after", [])
-            except ValueError:
-                changed, after = {}, []
+            # Every field here comes back from `clip`, which truncates long
+            # values to `…[N chars]` — so the JSON can be legally invalid, and it
+            # can also parse to a list or a string rather than the dict this
+            # reader wants. Both were uncaught: `.get` on a list raised
+            # AttributeError and the whole tool answered with a Python traceback.
+            changed = _as_dict(e["input"])
+            after = _as_dict(e["result"]).get("after")
             moved = " ".join(
                 [*(f"+{t}" for t in changed.get("add") or []), *(f"-{t}" for t in changed.get("remove") or [])]
             )
-            lines.append(f"{e['at']}  {e['tool']}  {moved or '(no tag change)'}  → {after}")
+            # A read is not a tag change that failed to happen. Rendering every
+            # non-tag row as "(no tag change) → []" made a history of reads look
+            # like a history of broken edits.
+            if e["kind"] == "tag":
+                lines.append(f"{e['at']}  {e['tool']}  {moved or '(no tags moved)'}  → {after if after is not None else []}")
+            else:
+                lines.append(f"{e['at']}  {e['tool']}  ({e['kind']}, {e['outcome']})")
         return {**_text("\n".join(lines)), "structuredContent": {"entries": entries}}
 
     if name == "read_memory":

@@ -18,10 +18,12 @@ from arra_memory.mcp import handle_mcp
 from arra_memory.memory import (
     create_memory,
     get_memory,
+    list_tags,
     memory_history,
     normalize_match,
     retag_memory,
     search_memories,
+    search_memories_nolog,
 )
 
 
@@ -215,8 +217,41 @@ def test_the_tag_filter_reaches_the_database_rather_than_only_python():
     from arra_memory.memory import scope_filter
 
     where = scope_filter({"tag": ["kvm", "haos"], "match": "any"})
-    assert "tags LIKE" in where
+    # lower() on the COLUMN, not only on the needle: normalize_tags keeps the
+    # first spelling, so the stored value can be "KVM".
+    assert "lower(tags) LIKE" in where
     # Quoted on both sides, so "ha" cannot match "haos".
     assert '"kvm"' in where and '"haos"' in where
     assert " OR " in where
     assert " AND " in scope_filter({"tag": ["kvm", "haos"], "match": "all"})
+
+
+def test_a_tag_is_found_whatever_its_casing():
+    """
+    The stored spelling is whatever was written first; the filter must not care.
+
+    This is the defect that made a retag hide a memory: `Q.has_tag` lowercased
+    the needle but not the column, so `tags LIKE '%"lancedb"%'` never matched a
+    stored `["LanceDB"]`. Every surface went on advertising the tag — facets,
+    the cloud, MCP list_tags — while nothing could filter by it in any casing,
+    and keyword search still found the memory, so it read as "no memories have
+    that tag" rather than as a bug.
+    """
+    create_memory({"content": "mixed case tag", "title": "Mixed", "tags": ["LanceDB"]})
+    create_memory({"content": "another", "title": "Other", "tags": ["turso"]})
+
+    for asked in ("LanceDB", "lancedb", "LANCEDB", "LaNcEdB"):
+        found = search_memories_nolog({"tag": asked})
+        assert [m["title"] for m in found] == ["Mixed"], f"tag={asked!r} did not find it"
+
+    # The tag the facets advertise is the one that must work.
+    assert any(t["tag"] == "LanceDB" for t in list_tags())
+
+
+def test_a_wildcard_in_a_tag_is_a_literal():
+    """A tag is user text, so its % and _ are characters and not patterns."""
+    create_memory({"content": "literal percent", "title": "Percent", "tags": ["a%b"]})
+    create_memory({"content": "would match a glob", "title": "Glob", "tags": ["axxb"]})
+
+    assert [m["title"] for m in search_memories_nolog({"tag": "a%b"})] == ["Percent"]
+    assert search_memories_nolog({"tag": "a%"}) == []

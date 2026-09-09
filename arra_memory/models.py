@@ -60,8 +60,27 @@ class Q:
 
         Quoted on both sides so "ha" cannot match "haos" — the same guard the
         in-Python filter uses, expressed where the database can apply it.
+
+        `lower()` goes on the COLUMN as well as the needle, and that is the whole
+        point. `normalize_tags` keeps the first spelling it sees, so the column
+        can hold `["LanceDB"]`; lowercasing only the needle produced
+        `tags LIKE '%"lancedb"%'`, which a case-sensitive LIKE never matches. The
+        memory then became unreachable by tag on every surface — while
+        /api/facets, the tag cloud and MCP list_tags all went on advertising the
+        tag — and keyword search still found it, so the failure read as "nothing
+        has that tag" rather than as a bug. The TypeScript original applied
+        `lower(tags) LIKE ?`; the port dropped the column half.
+
+        `%` and `_` in the tag are escaped, because a tag is user text: without
+        this, the tag `a%` matches every tag beginning with `a`.
         """
-        return f"{column} LIKE {Q.lit('%' + chr(34) + str(tag).lower() + chr(34) + '%')}"
+        needle = str(tag).lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        # Built outside the f-string: a backslash inside an f-string EXPRESSION
+        # is a syntax error before Python 3.12, and 3.11 is this package's floor
+        # (tests/test_python_floor.py, which caught exactly this).
+        pattern = Q.lit('%"' + needle + '"%')
+        escape = "'\\'"
+        return f"lower({column}) LIKE {pattern} ESCAPE {escape}"
 
     @staticmethod
     def is_null(column: str) -> str:

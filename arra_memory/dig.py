@@ -47,6 +47,7 @@ SCORE = {
     "tag_exact": 100,
     "title": 25,
     "semantic": 20,
+    "semantic_far": 10,
     "retagged": 12,
     "body": 15,
     "asked": 8,
@@ -54,6 +55,21 @@ SCORE = {
 
 # Below this an item is weak — returned, and said to be weak.
 CONFIDENT_FLOOR = 15
+
+# Cosine DISTANCE, so smaller is closer: 0 is the same direction, 1 is
+# unrelated. A vector index always returns its k nearest neighbours, however far
+# away they are — so without a threshold every subject on an instance with
+# embeddings collected `limit` items at the full semantic tier, `strong` was
+# never empty, and `_verdict` could only ever say "found". The two verdicts that
+# make a dig worth reading — "asked-never-answered" and "unknown" — were
+# unreachable.
+#
+# 0.55 is where bge-m3 stops being about the subject and starts being about the
+# corpus: measured on this fleet's own memories, a genuinely related memory sits
+# near 0.3-0.5 and an unrelated one near 0.8-1.0. Past it the item is still
+# RETURNED — under `weak`, at `semantic_far` — because a low score is a signal,
+# not a failure. It just no longer counts as an answer.
+SEMANTIC_NEAR = 0.55
 
 
 def _item(source: str, id: str, label: str, score: int, why: str) -> dict:
@@ -100,7 +116,18 @@ def dig(subject: str, limit: int = 20, source: str = "web") -> dict:
             semantic = search_semantic_nolog({"query": key, "limit": capped})
             for memory in semantic["memories"]:
                 distance = semantic["distances"].get(memory["id"], 1.0)
-                add("meaning", memory["id"], memory["title"], SCORE["semantic"], f"cosine {distance:.3f}")
+                near = distance <= SEMANTIC_NEAR
+                add(
+                    "meaning",
+                    memory["id"],
+                    memory["title"],
+                    SCORE["semantic"] if near else SCORE["semantic_far"],
+                    # "distance", not "cosine": the number is a cosine DISTANCE,
+                    # and calling it a cosine inverts what the reader is told to
+                    # trust — 0.9 read as a similarity looks like the best hit on
+                    # the page when it is the worst.
+                    f"distance {distance:.3f}" if near else f"distance {distance:.3f}, far",
+                )
         except Exception:
             pass
 

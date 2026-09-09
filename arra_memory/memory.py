@@ -264,7 +264,15 @@ def retag_memory(memory_id: str, add=None, remove=None, source: str = "web") -> 
     kept = [t for t in existing["tags"] if t.lower() not in dropping]
     # normalize_tags does the deduping, casing and the ten-tag cap, so an add
     # cannot smuggle a duplicate or an eleventh tag past the write path's rules.
-    resulting = normalize_tags(kept + [str(t) for t in (add if isinstance(add, list) else ([] if add is None else [add]))])
+    #
+    # Passed through WITHOUT str(): normalize_tags drops anything that is not a
+    # string, and coercing first defeated exactly that guard — `add=[123]` became
+    # the tag "123" and `add=[{"a": 1}]` became "{'a': 1}", which is how a dict
+    # ends up rendered as a chip in the tag cloud. The comment above claimed
+    # normalize_tags enforced the rules while the line below it made sure it
+    # could not.
+    incoming = add if isinstance(add, list) else ([] if add is None else [add])
+    resulting = normalize_tags(kept + list(incoming))
 
     removed = [t for t in existing["tags"] if t not in resulting]
     added = [t for t in resulting if t not in existing["tags"]]
@@ -311,10 +319,21 @@ def _record_retag(memory: dict, before: list[str], added: list[str], removed: li
 
 
 def memory_history(memory_id: str, limit: int = 100) -> list[dict]:
-    """Everything the log knows about one memory, newest first."""
+    """
+    Everything the log knows about one memory, newest first.
+
+    An empty id is an ERROR and not a wildcard. `list_traces` treats a falsy
+    subject as "no filter", so an omitted id used to return the entire trace log
+    dressed up as one memory's history — every subject, every surface — which is
+    both wrong and a disclosure. The MCP tool declares `id` as required; this is
+    that requirement being enforced somewhere it cannot be skipped.
+    """
     from .trace import list_traces
 
-    return list_traces(limit=limit, subject=memory_id)
+    identifier = (memory_id or "").strip()
+    if not identifier:
+        raise ValueError("a memory id is required")
+    return list_traces(limit=limit, subject=identifier)
 
 
 def delete_memory(memory_id: str) -> bool:
