@@ -1,0 +1,464 @@
+@import "tailwindcss";
+
+/*
+ * Arra Memory — the archive.
+ *
+ * The visual thesis: a memory is a document, not a row. Content is set in a
+ * serif at reading size and given real measure; the chrome around it is quiet
+ * sans; every machine-generated fact (id, timestamp, source, count) is mono.
+ * That three-way split is the whole identity, and it needs no downloaded font,
+ * which matters for an add-on that may run on a house with no internet.
+ *
+ * ── themes
+ *
+ * Every colour in the app comes from a token below. Nothing hard-codes a hex
+ * outside this file, which is what makes a theme a set of variable overrides
+ * rather than a rewrite — and it is why swapping one cannot miss a corner.
+ *
+ * The @theme block is the DEFAULT and also declares the token names to
+ * Tailwind. The [data-theme] blocks under it re-point the same names. See
+ * theme.ts for the switch.
+ */
+
+@theme {
+  /* Default: Slate — cool, quiet, no warm cast. */
+  --color-ground: #101418;
+  --color-panel: #171c22;
+  --color-raised: #1f262e;
+  --color-line: #2a323b;
+  --color-line-bright: #3a444f;
+
+  --color-ink: #e9edf2;
+  --color-dim: #9aa6b3;
+  --color-faint: #6b7683;
+
+  --color-ember: #5eb0c9;
+  --color-ember-soft: #14313b;
+
+  /* Kinds get their own hues so the corpus is scannable by shape of thought,
+     not just by text. Semantic, and deliberately NOT the accent — an accent
+     means "you can act on this", a kind hue means "this is what it is". */
+  --color-kind-learn: #7fa8d4;
+  --color-kind-enlighten: #c2a0e0;
+  --color-kind-retro: #8fc4a3;
+  --color-kind-artifact: #d4a58f;
+
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+                "Times New Roman", serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+}
+
+/*
+ * Ember — the original. Warm charcoal, an archive lit by a lamp rather than a
+ * spreadsheet. Kept because it was the identity for eleven versions and taste
+ * is allowed to change back.
+ */
+[data-theme="ember"] {
+  --color-ground: #14120f;
+  --color-panel: #1c1915;
+  --color-raised: #262119;
+  --color-line: #332e26;
+  --color-line-bright: #453e33;
+  --color-ink: #f4f1ea;
+  --color-dim: #a8a091;
+  --color-faint: #756d5f;
+  --color-ember: #d8853a;
+  --color-ember-soft: #3a2717;
+  --color-kind-learn: #8fa8c4;
+  --color-kind-enlighten: #c9a6e0;
+  --color-kind-retro: #a3c48f;
+  --color-kind-artifact: #d4a08f;
+}
+
+/* Moss — deep green-black, sage accent. Terminal lineage without the glare. */
+[data-theme="moss"] {
+  --color-ground: #0f1411;
+  --color-panel: #161d18;
+  --color-raised: #1e2721;
+  --color-line: #29342c;
+  --color-line-bright: #38463c;
+  --color-ink: #e8efe9;
+  --color-dim: #9ab0a1;
+  --color-faint: #6a7d70;
+  --color-ember: #7fc98d;
+  --color-ember-soft: #17301f;
+  --color-kind-learn: #86b6cf;
+  --color-kind-enlighten: #c4a7d8;
+  --color-kind-retro: #9fce9a;
+  --color-kind-artifact: #d6b189;
+}
+
+/* Iris — near-black with violet. The most "screen" of the dark set. */
+[data-theme="iris"] {
+  --color-ground: #121016;
+  --color-panel: #191621;
+  --color-raised: #221e2c;
+  --color-line: #2f2a3b;
+  --color-line-bright: #40394f;
+  --color-ink: #eeebf4;
+  --color-dim: #a79fb8;
+  --color-faint: #756d86;
+  --color-ember: #a98ae0;
+  --color-ember-soft: #2a1f3d;
+  --color-kind-learn: #8aa8e0;
+  --color-kind-enlighten: #cba0e8;
+  --color-kind-retro: #92cbb0;
+  --color-kind-artifact: #dfa8a0;
+}
+
+/*
+ * Mono — no hue anywhere, including the accent.
+ *
+ * For when every accent feels like a decision someone else made. Interaction is
+ * carried by contrast and weight instead of colour, which is also the closest
+ * this app gets to being legible with any form of colour blindness.
+ */
+[data-theme="mono"] {
+  --color-ground: #111111;
+  --color-panel: #191919;
+  --color-raised: #232323;
+  --color-line: #2f2f2f;
+  --color-line-bright: #454545;
+  --color-ink: #f0f0f0;
+  --color-dim: #a5a5a5;
+  --color-faint: #737373;
+  --color-ember: #e8e8e8;
+  --color-ember-soft: #2e2e2e;
+  --color-kind-learn: #b9b9b9;
+  --color-kind-enlighten: #d6d6d6;
+  --color-kind-retro: #9a9a9a;
+  --color-kind-artifact: #cacaca;
+}
+
+/*
+ * Paper — the one light theme.
+ *
+ * Not an inversion. A light archive needs a warm ground (pure white glares
+ * beside serif body text), darker kind hues to survive on it, and a soft accent
+ * wash that does not turn into a highlighter. The tokens below are chosen for
+ * light, not derived from the dark set.
+ */
+[data-theme="paper"] {
+  --color-ground: #f6f3ec;
+  --color-panel: #fffdf8;
+  --color-raised: #efeade;
+  --color-line: #ddd6c7;
+  --color-line-bright: #c6bda9;
+  --color-ink: #23201a;
+  --color-dim: #5f584c;
+  --color-faint: #8b8274;
+  --color-ember: #a2591f;
+  --color-ember-soft: #f0e2d0;
+  --color-kind-learn: #3c6288;
+  --color-kind-enlighten: #6d4a8c;
+  --color-kind-retro: #3f6b46;
+  --color-kind-artifact: #8a5238;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  /* The one light theme has to say so, or the browser paints form controls,
+     scrollbars and autofill for a dark page on a light one. */
+  html[data-theme="paper"] {
+    color-scheme: light;
+  }
+
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    /* The add-on renders inside a Home Assistant ingress iframe, which supplies
+       its own scroll container. A second one here would nest scrollbars. */
+    margin: 0;
+  }
+
+  /* Every focusable thing gets the same visible ring — an add-on is operated
+     with a keyboard more often than its author expects. */
+  :focus-visible {
+    outline: 2px solid var(--color-ember);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--color-ember-soft);
+    color: var(--color-ink);
+  }
+
+  /* A dense archive scrolls a lot; the default scrollbar is louder than the
+     content it sits beside. */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line);
+    border-radius: 99px;
+    border: 3px solid var(--color-ground);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-line-bright); }
+}
+
+@layer components {
+  /* The lamp: a single wash behind the header, so the top of the archive feels
+     lit rather than the whole page feeling tinted. Derived from the accent, so
+     it follows the theme without a per-theme rule. */
+  .lamp {
+    background:
+      radial-gradient(
+        60rem 24rem at 12% -6rem,
+        color-mix(in oklab, var(--color-ember) 12%, transparent),
+        transparent 70%
+      );
+  }
+
+  /* Memory content is the one place that gets serif at reading measure. */
+  .prose-memory {
+    font-family: var(--font-serif);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    color: color-mix(in oklab, var(--color-ink) 92%, transparent);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .meta {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    color: var(--color-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+  }
+
+  /*
+   * A filter chip. The whole filter bar is one idiom.
+   *
+   * Off is an outline; on is filled with the accent wash and outlined in the
+   * accent. Both states are visible at once across a row, which is the point —
+   * a dropdown hides its options until you open it, and three different filter
+   * idioms in one header is what made this page feel wrong.
+   */
+  .chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-line);
+    background: transparent;
+    color: var(--color-dim);
+    padding: 0.15rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    transition: border-color 120ms, color 120ms, background 120ms;
+    cursor: pointer;
+  }
+
+  .chip:hover {
+    border-color: var(--color-line-bright);
+    color: var(--color-ink);
+  }
+
+  .chip[aria-pressed="true"] {
+    border-color: var(--color-ember);
+    background: var(--color-ember-soft);
+    color: var(--color-ember);
+  }
+
+  .chip-count {
+    opacity: 0.55;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── add-on options form ─────────────────────────────────────────────────────
+   A three-part row per option: the key (with a pin badge when the environment
+   owns it), the input, and where the value came from. The provenance line is
+   not decoration — a field showing the right value for the wrong reason looks
+   identical to a correct one until you change it and nothing happens. */
+.settings-form { display: flex; flex-direction: column; gap: 0.9rem; }
+
+.setting { display: grid; grid-template-columns: 1fr; gap: 0.3rem; }
+@media (min-width: 46rem) {
+  .setting { grid-template-columns: 14rem 1fr; align-items: baseline; }
+  .setting .setting-meta { grid-column: 2; }
+}
+
+.setting-key {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.86rem;
+  display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+}
+
+.setting-key .pin {
+  font-style: normal; font-size: 0.7rem; letter-spacing: 0.04em;
+  padding: 0.05rem 0.4rem; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  opacity: 0.75; cursor: help;
+}
+
+.setting-input { display: flex; gap: 0.4rem; align-items: center; }
+.setting-input input {
+  flex: 1; min-width: 0;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 0.86rem;
+}
+
+/* A locked field is still READABLE — hiding it would remove the answer to
+   "what is it set to", which is the main reason to open this page. */
+.setting.locked .setting-input input { opacity: 0.6; cursor: not-allowed; }
+
+.setting.dirty .setting-input input {
+  border-color: color-mix(in srgb, var(--accent, #58a6ff) 55%, transparent);
+}
+
+.setting-meta { font-size: 0.74rem; opacity: 0.6; }
+.btn.tiny { font-size: 0.72rem; padding: 0.15rem 0.5rem; }
+.note.warn { border-left: 3px solid var(--warn, #d29922); padding-left: 0.7rem; }
+
+/* The options block is a DISCLOSURE, closed by default. On a supervised
+   install these are read-only and everywhere else they are set once, so they
+   must not push the tool list — the thing people actually come here for —
+   below the fold. */
+.server-options {
+  border: 1px solid var(--line, #242936);
+  border-radius: 10px;
+  padding: 0.6rem 0.9rem;
+  margin: 1rem 0 1.4rem;
+}
+.server-options > summary {
+  cursor: pointer;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+  font-weight: 600; font-size: 0.92rem;
+  list-style: none;
+}
+.server-options > summary::-webkit-details-marker { display: none; }
+.server-options > summary::before {
+  content: "▸"; margin-right: 0.5rem; opacity: 0.55;
+  display: inline-block; transition: transform 0.12s ease;
+}
+.server-options[open] > summary::before { transform: rotate(90deg); }
+.server-options > summary .meta { font-weight: 400; }
+.server-options[open] > summary { margin-bottom: 0.8rem; }
+
+/* The banner was colliding with the section heading below it — it is a block
+   with its own space, not an inline aside. */
+.note.warn { display: block; margin: 0 0 1rem; line-height: 1.5; }
+
+/* ── who has access ──────────────────────────────────────────────────────────
+   OAuth clients with live tokens, revocable per row. Token VALUES are never
+   shown here — nothing legitimate ever asks you to paste an OAuth token, so
+   displaying one is risk with no use. The static api_token is different: it
+   exists to be pasted, so its row above has reveal and regenerate. */
+.access-block { margin: 1.1rem 0; }
+.access-block h4 { margin: 0 0 0.1rem; font-size: 0.88rem; }
+/* A real table: one shared grid, rows contribute cells via display:contents,
+   so every kind, name, count and button sits on the same column rule. The
+   flex version wrapped each row independently and nothing aligned with
+   anything — a list wearing a table\'s name. */
+.access-list { list-style: none; margin: 0.5rem 0 0; padding: 0;
+               display: grid;
+               grid-template-columns: max-content minmax(8rem, 1fr) max-content minmax(0, max-content) max-content;
+               gap: 0.45rem 0.9rem; align-items: baseline; }
+.access-list li { display: contents; }
+.access-list .mono { font-family: var(--mono, ui-monospace, monospace); font-size: 0.84rem;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.access-list .num { font-variant-numeric: tabular-nums; }
+/* display:contents makes the <li> unpaintable, so dimming must land on cells */
+.access-list li.inactive > * { opacity: 0.5; }
+.access-list li.inactive .kind { border-style: dashed; }
+
+/* ── action buttons ──────────────────────────────────────────────────────────
+   The settings/access controls shipped with class names from a different
+   design vocabulary (.btn/.ghost), which exist nowhere in this sheet — so they
+   rendered as bare text: no border, no cursor, no press. A control that does
+   not announce it is a control is indistinguishable from a label.
+
+   .act = neutral action. .act-danger = destructive (revoke): quiet at rest,
+   unmistakably red the moment you engage it. Both get all four affordances a
+   pointer needs: cursor, hover, pressed, and a keyboard focus ring. */
+.act, .act-danger {
+  cursor: pointer;
+  font-size: 0.74rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--line, #333a46);
+  color: var(--faint, #8b93a7);
+  background: transparent;
+  transition: color 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+  user-select: none;
+}
+.act:hover        { color: var(--ember, #e2a35c); border-color: var(--ember, #e2a35c); }
+.act-danger:hover { color: #f0928f; border-color: #5c2320; background: #2a161422; }
+.act:active, .act-danger:active { transform: translateY(1px); }
+.act:focus-visible, .act-danger:focus-visible {
+  outline: 2px solid var(--ember, #e2a35c); outline-offset: 1px;
+}
+.act:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* Client rows: say the TYPE, and say when a registration is dead weight. */
+.access-list .kind {
+  font-size: 0.68rem; letter-spacing: 0.04em;
+  padding: 0.06rem 0.45rem; border-radius: 999px;
+  border: 1px solid var(--line, #333a46); opacity: 0.85;
+}
+.access-list li.inactive .kind { border-style: dashed; }
+
+/* ── folded facet rows ───────────────────────────────────────────────────────
+   A facet wider than FOLD_AT collapses to this. The summary keeps the label,
+   the value count, and — critically — every TICKED chip, so collapsing never
+   hides active filter state. Expanded, values run one per line with the count
+   on the right edge: a table you can scan, not a cloud you must read. */
+.facet-row,
+.facet-fold > summary {
+  display: grid; grid-template-columns: 5rem 1fr;
+  column-gap: 0.6rem; align-items: baseline;
+}
+.facet-fold > summary { cursor: pointer; list-style: none; }
+.facet-fold > summary::-webkit-details-marker { display: none; }
+/* The marker lives INSIDE the label cell — as a summary::before it would be
+   a third grid column and push every folded row out of line with flat ones. */
+.facet-fold > summary > .eyebrow::before {
+  content: "▸ "; opacity: 0.5; font-size: 0.7rem;
+  display: inline-block; transition: transform 0.12s ease;
+}
+.facet-fold[open] > summary > .eyebrow::before { transform: rotate(90deg); }
+.facet-fold-list {
+  display: flex; flex-direction: column; gap: 2px;
+  /* rendered inside the chip column already — no extra indent */
+  margin: 0.35rem 0; max-width: 34rem;
+}
+.chip-line {
+  display: flex; width: 100%; justify-content: space-between; align-items: baseline;
+}
+.chip-line > span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* the toggle — the last ROW of the list, not a chip beside it */
+.facet-more { cursor: pointer; }
+/* only the TABLE variant spans the row; the inline one stays chip-sized */
+.chip-line.facet-more { width: 100%; text-align: left; }
+.facet-more:hover { color: var(--fg); }
+.facet-more-marker {
+  display: inline-block; font-size: 0.65rem; opacity: 0.55;
+  transition: transform 0.12s ease; margin-right: 0.25rem;
+}
+.facet-more[aria-expanded="true"] .facet-more-marker { transform: rotate(90deg); }

@@ -1,0 +1,16 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+# runtime state — the corpus, settings, and every secret live here
+data/
+.env
+.dev.vars
+# the UI toolchain
+ui/node_modules/
+# editor
+.DS_Store
